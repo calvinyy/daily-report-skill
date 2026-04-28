@@ -7,7 +7,7 @@ description: Generate, preview, troubleshoot, or set up Feishu/Lark daily work r
 
 ## Overview
 
-Use this skill to generate a daily work report, write it into a weekly Feishu/Lark document, and optionally notify the user. The bundled script collects local Codex sessions, Claude Code history, Feishu messages/calendar/minutes, and Chrome history, then summarizes the work with a local Claude-compatible CLI if available.
+Use this skill to generate a daily work report, write it into a weekly Feishu/Lark document, and optionally notify the user. The bundled script collects local Codex sessions, Claude Code history, Feishu messages/calendar/minutes, and Chrome history, then summarizes the work with Codex first and Claude Code as a fallback.
 
 ## Quick Workflow
 
@@ -46,12 +46,20 @@ The config is written to `~/.daily-report-skill/config.json`. Important fields:
 - `notify_as`: `user` or `bot`. Prefer `user` for individual installs.
 - `send_notification`: set `false` to write docs without sending a message.
 - `lark_cli`: optional explicit path to `lark-cli`.
-- `ai_cli`: optional explicit path to a Claude-compatible CLI.
-- `ai_enabled`: set `false` to skip AI summarization and use fallback formatting.
+- `codex_cli`: optional explicit path to the Codex CLI. Preferred summarizer.
+- `claude_cli`: optional explicit path to the Claude Code CLI. Fallback summarizer.
+- `ai_cli`: deprecated alias for `claude_cli`.
+- `ai_enabled`: set `false` to skip Codex/Claude summarization and use fallback formatting.
 - `chrome_profile`: Chrome profile folder, usually `Default` or `Profile 1`.
 - `skip_domains`: domains excluded from browser-history summaries.
 
-Command-line flags override config values for one run: `--folder-name`, `--notify-user-id`, `--lark-cli`, `--ai-cli`, `--no-ai`, `--no-notify`.
+Command-line flags override config values for one run: `--folder-name`, `--notify-user-id`, `--lark-cli`, `--codex-cli`, `--claude-cli`, `--ai-cli`, `--no-ai`, `--no-notify`.
+
+Default summarization order:
+
+1. Use `codex exec --skip-git-repo-check --ephemeral` and read the final answer through `--output-last-message`.
+2. If Codex is missing, not logged in, times out, or returns no summary, fall back to `claude -p --output-format text`.
+3. If both are unavailable, exit with an explicit error and advise the user to install/open Codex, run `codex login status`, run `codex login` if needed, or temporarily use `--no-ai` for a basic raw-record report.
 
 ## Feishu Requirements
 
@@ -88,7 +96,7 @@ Chrome history is copied to a temporary SQLite file before reading so it can wor
 
 - Missing `lark-cli`: ask the user to install `@larksuite/cli`, then run `lark-cli --version`.
 - Invalid Feishu token: run `lark-cli auth status`, then rerun `lark-cli auth login ...`.
-- No AI summary: install or configure a Claude-compatible CLI, or run with `--no-ai`.
+- No AI summary: prioritize installing/opening Codex and running `codex login status`; Claude Code CLI is only the fallback. Use `--no-ai` only when a basic raw-record report is acceptable.
 - Empty Chrome history: check `chrome_profile` in config.
 - Duplicate daily sections: rerun after confirming the existing section heading matches `## YYYY年MM月DD日（周X）`.
 - Permission errors on Feishu docs: rerun auth with all required domains and use `--install-check`.

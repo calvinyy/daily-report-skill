@@ -2,10 +2,9 @@
 """
 Generate a Feishu/Lark daily work report.
 
-The script collects local work activity, asks an optional local AI CLI to
+The script collects local work activity, asks Codex first and Claude second to
 summarize it, writes the report to a weekly Feishu document, and can notify the
-current user. It uses only Python's standard library plus the external
-`lark-cli` command.
+current user. It uses only Python's standard library plus external CLIs.
 """
 
 from __future__ import annotations
@@ -45,6 +44,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "notify_as": "user",
     "send_notification": True,
     "lark_cli": "",
+    "codex_cli": "",
+    "claude_cli": "",
     "ai_cli": "",
     "ai_enabled": True,
     "timezone_offset": "+08:00",
@@ -100,6 +101,12 @@ def find_binary(configured: str, name: str, extra_paths: list[str] | None = None
         if resolved:
             return resolved
     return ""
+
+
+def command_preview(command: list[str]) -> str:
+    if not command:
+        return ""
+    return " ".join(Path(part).name if idx == 0 else part for idx, part in enumerate(command[:4]))
 
 
 def run_json(command: list[str], timeout: int = 45) -> dict[str, Any]:
@@ -678,26 +685,104 @@ def build_prompt(
     return "\n".join(lines)
 
 
-def summarize_with_ai(ai_cli: str, prompt: str, enabled: bool) -> str:
-    if not enabled or not ai_cli:
-        return ""
+def summarize_with_codex(codex_cli: str, prompt: str) -> tuple[str, str]:
+    if not codex_cli:
+        return "", "未找到 codex CLI"
 
-    log("  调用本地 AI CLI 生成总结...")
+    log("  调用 Codex 生成总结...")
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix="codex-summary-", suffix=".md", delete=False) as output:
+        output_path = output.name
     try:
         result = subprocess.run(
-            [ai_cli, "-p", prompt, "--output-format", "text"],
+            [
+                codex_cli,
+                "exec",
+                "--skip-git-repo-check",
+                "--ephemeral",
+                "--output-last-message",
+                output_path,
+                "-",
+            ],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            cwd=str(APP_DIR),
+            timeout=180,
+        )
+        summary = Path(output_path).read_text(encoding="utf-8", errors="replace").strip()
+        if result.returncode == 0 and summary:
+            return summary, ""
+        detail = result.stderr.strip() or result.stdout.strip() or f"{command_preview([codex_cli, 'exec'])} exited {result.returncode}"
+        return "", detail[:800]
+    except subprocess.TimeoutExpired:
+        return "", "Codex 生成总结超时"
+    except Exception as exc:
+        return "", f"Codex 调用异常: {exc}"
+    finally:
+        try:
+            os.unlink(output_path)
+        except Exception:
+            pass
+
+
+def summarize_with_claude(claude_cli: str, prompt: str) -> tuple[str, str]:
+    if not claude_cli:
+        return "", "未找到 claude CLI"
+
+    log("  Codex 不可用，调用 Claude 备用总结...")
+    try:
+        result = subprocess.run(
+            [claude_cli, "-p", prompt, "--output-format", "text"],
             capture_output=True,
             text=True,
             timeout=120,
         )
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-        log(f"  AI CLI 失败: {result.stderr[:200]}")
+            return result.stdout.strip(), ""
+        detail = result.stderr.strip() or result.stdout.strip() or f"{command_preview([claude_cli, '-p'])} exited {result.returncode}"
+        return "", detail[:800]
     except subprocess.TimeoutExpired:
-        log("  AI CLI 超时")
+        return "", "Claude 生成总结超时"
     except Exception as exc:
-        log(f"  AI CLI 异常: {exc}")
-    return ""
+        return "", f"Claude 调用异常: {exc}"
+
+
+def ai_unavailable_message(errors: list[str]) -> str:
+    details = "\n".join(f"- {error}" for error in errors if error)
+    if not details:
+        details = "- 未找到可用的 Codex 或 Claude CLI"
+    return (
+        "无法生成 AI 日报总结：Codex 不可用，Claude 备用也不可用。\n\n"
+        f"{details}\n\n"
+        "建议处理方式：\n"
+        "1. 优先开通并登录 Codex：安装/打开 Codex，运行 `codex login status` 检查登录状态；未登录时运行 `codex login`。\n"
+        "2. 确认命令行可用：运行 `codex exec --skip-git-repo-check --ephemeral \"只输出 OK\"`。\n"
+        "3. 如果暂时无法使用 Codex，可以安装并登录 Claude Code CLI 作为备用。\n"
+        "4. 如果只想生成基础版原始记录，可显式加 `--no-ai`。"
+    )
+
+
+def summarize_with_ai(codex_cli: str, claude_cli: str, prompt: str, enabled: bool) -> str:
+    if not enabled:
+        return ""
+
+    errors: list[str] = []
+    summary, error = summarize_with_codex(codex_cli, prompt)
+    if summary:
+        return summary
+    if error:
+        log(f"  Codex 总结失败: {error[:200]}")
+        errors.append(f"Codex: {error}")
+
+    summary, error = summarize_with_claude(claude_cli, prompt)
+    if summary:
+        return summary
+    if error:
+        log(f"  Claude 备用失败: {error[:200]}")
+        errors.append(f"Claude: {error}")
+
+    raise SystemExit(ai_unavailable_message(errors))
 
 
 def fallback_format(
@@ -777,12 +862,32 @@ def collect_data(
     }
 
 
-def install_check(config: dict[str, Any], lark_cli: str, ai_cli: str) -> int:
+def cli_status(binary: str, args: list[str], timeout: int = 10) -> str:
+    if not binary:
+        return "未找到"
+    try:
+        result = subprocess.run([binary] + args, capture_output=True, text=True, timeout=timeout)
+    except Exception as exc:
+        return f"不可用 ({exc})"
+    output = (result.stdout or result.stderr).strip().splitlines()
+    detail = output[0] if output else f"exit {result.returncode}"
+    return detail if result.returncode == 0 else f"不可用 ({detail})"
+
+
+def install_check(config: dict[str, Any], lark_cli: str, codex_cli: str, claude_cli: str) -> int:
     print("Daily Report Skill 安装检查")
     print(f"- Python: {sys.version.split()[0]}")
     print(f"- lark-cli: {lark_cli or '未找到'}")
-    print(f"- AI CLI: {ai_cli or '未找到，可用 fallback'}")
+    print(f"- Codex CLI: {codex_cli or '未找到'}")
+    print(f"- Codex 登录: {cli_status(codex_cli, ['login', 'status'])}")
+    print(f"- Claude CLI 备用: {claude_cli or '未找到'}")
+    if claude_cli:
+        print(f"- Claude 版本: {cli_status(claude_cli, ['--version'])}")
     print(f"- 配置文件: {DEFAULT_CONFIG_PATH if DEFAULT_CONFIG_PATH.exists() else '未创建'}")
+
+    if config.get("ai_enabled", True) and not codex_cli and not claude_cli:
+        print("\n缺少 AI 能力：请优先安装/登录 Codex；Claude Code CLI 可作为备用。")
+        return 1
 
     if not lark_cli:
         print("\n缺少 lark-cli。请先安装 @larksuite/cli 并完成授权。")
@@ -817,12 +922,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--init-config", action="store_true", help="Create a default config file and exit.")
     parser.add_argument("--install-check", action="store_true", help="Check dependencies and Feishu auth.")
     parser.add_argument("--dry-run", action="store_true", help="Collect data and print markdown without writing Feishu.")
-    parser.add_argument("--no-ai", action="store_true", help="Do not call an AI CLI; use fallback formatting.")
+    parser.add_argument("--no-ai", action="store_true", help="Do not call Codex or Claude; use basic fallback formatting.")
     parser.add_argument("--no-notify", action="store_true", help="Do not send Feishu notification.")
     parser.add_argument("--folder-name", help="Feishu folder name. Defaults to config value.")
     parser.add_argument("--notify-user-id", help="Feishu open_id to notify. Defaults to current user.")
     parser.add_argument("--lark-cli", help="Path to lark-cli.")
-    parser.add_argument("--ai-cli", help="Path to Claude-compatible AI CLI.")
+    parser.add_argument("--codex-cli", help="Path to codex CLI.")
+    parser.add_argument("--claude-cli", help="Path to Claude Code CLI fallback.")
+    parser.add_argument("--ai-cli", help="Deprecated alias for --claude-cli.")
     return parser
 
 
@@ -845,14 +952,27 @@ def main() -> int:
         config["ai_enabled"] = False
     if args.lark_cli:
         config["lark_cli"] = args.lark_cli
+    if args.codex_cli:
+        config["codex_cli"] = args.codex_cli
+    if args.claude_cli:
+        config["claude_cli"] = args.claude_cli
     if args.ai_cli:
-        config["ai_cli"] = args.ai_cli
+        config["claude_cli"] = args.ai_cli
 
     lark_cli = find_binary(str(config.get("lark_cli") or ""), "lark-cli", ["/opt/homebrew/bin/lark-cli"])
-    ai_cli = find_binary(str(config.get("ai_cli") or ""), "claude", [str(Path.home() / ".local" / "bin" / "claude")])
+    codex_cli = find_binary(
+        str(config.get("codex_cli") or ""),
+        "codex",
+        ["/Applications/Codex.app/Contents/Resources/codex"],
+    )
+    claude_cli = find_binary(
+        str(config.get("claude_cli") or config.get("ai_cli") or ""),
+        "claude",
+        [str(Path.home() / ".local" / "bin" / "claude")],
+    )
 
     if args.install_check:
-        return install_check(config, lark_cli, ai_cli)
+        return install_check(config, lark_cli, codex_cli, claude_cli)
     if not lark_cli:
         raise SystemExit("未找到 lark-cli。请先安装 @larksuite/cli 并完成飞书授权。")
 
@@ -870,7 +990,7 @@ def main() -> int:
 
     data = collect_data(lark, target_date, config)
     prompt = build_prompt(target_date, **data)
-    summary = summarize_with_ai(ai_cli, prompt, bool(config.get("ai_enabled", True)))
+    summary = summarize_with_ai(codex_cli, claude_cli, prompt, bool(config.get("ai_enabled", True)))
     if not summary:
         summary = fallback_format(
             data["codex_sessions"],

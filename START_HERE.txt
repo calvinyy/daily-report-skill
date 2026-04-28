@@ -23,7 +23,8 @@
 - 飞书账号。
 - 可以打开“终端”应用。
 - 可以安装 Node.js / npm。
-- 可选: Claude Code CLI。没有也能运行，但日报会用较基础的自动格式。
+- Codex CLI。日报默认优先使用 Codex 生成总结。
+- 可选: Claude Code CLI。只有 Codex 不可用时才作为备用。
 
 ## 第 1 步: 安装 Daily Report Skill
 
@@ -151,7 +152,9 @@ Daily Report Skill 安装检查
 python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --dry-run
 ```
 
-如果电脑没有 Claude Code CLI，可以先用:
+预览时默认会优先调用 Codex 生成总结。如果 Codex 不可用，会自动尝试 Claude Code CLI。
+
+如果 Codex 和 Claude 都暂时不可用，但你只想先看基础原始记录，可以用:
 
 ```bash
 python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --dry-run --no-ai
@@ -214,7 +217,9 @@ python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --init-con
 - `folder_name`: 飞书文件夹名称，默认 `周报记录`。
 - `send_notification`: 是否发送飞书通知，默认 `true`。
 - `notify_user_id`: 要通知的飞书 open_id。留空时默认通知当前授权用户。
-- `ai_enabled`: 是否使用本地 AI CLI 总结，默认 `true`。
+- `codex_cli`: Codex CLI 路径。通常不需要手动填写，脚本会自动寻找。
+- `claude_cli`: Claude Code CLI 路径。只作为 Codex 不可用时的备用。
+- `ai_enabled`: 是否使用 Codex / Claude 总结，默认 `true`。
 - `chrome_profile`: Chrome 用户目录。常见值是 `Default` 或 `Profile 1`。
 
 如果你不想收到飞书通知，可以运行:
@@ -306,11 +311,32 @@ python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --install-
 
 如果授权正常，再检查飞书是否允许创建云文档，以及账号是否有 Drive / Docs 权限。
 
-### 4. 日报内容太粗糙
+### 4. 提示 Codex 和 Claude 都不可用
 
-通常是因为没有本地 AI CLI。可以先继续使用基础版；如果公司统一提供 Claude Code CLI，再安装后重新运行。
+日报默认优先使用 Codex 生成总结，Claude Code CLI 只是备用。如果两个都不可用，脚本会停止并提示开通或登录 Codex。
 
-临时不用 AI:
+请先检查 Codex:
+
+```bash
+codex login status
+```
+
+如果没有登录，运行:
+
+```bash
+codex login
+```
+
+再验证 Codex 能否工作:
+
+```bash
+codex exec --skip-git-repo-check --ephemeral "只输出 OK"
+```
+
+如果公司暂时没有开通 Codex，可以先安装并登录 Claude Code CLI 作为备用。
+
+临时不用 AI，只生成基础版原始记录:
+
 
 ```bash
 python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --no-ai

@@ -13,7 +13,8 @@ For non-technical installation steps, open one of these files:
 ## What It Does
 
 - Collects Codex sessions, Claude Code sessions, Feishu messages, Feishu calendar events, Feishu minutes, and Chrome history.
-- Generates a structured daily report.
+- Generates a structured daily report with Codex first and Claude Code as fallback.
+- Fails with an actionable Codex setup message if neither Codex nor Claude is available, unless `--no-ai` is explicitly used.
 - Creates or reuses a Feishu Drive folder named `周报记录`.
 - Creates or reuses a weekly Feishu document.
 - Writes the daily section and maintains a `改动记录` section.
