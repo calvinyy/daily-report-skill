@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>日报 Skill 安装指南</title>
+<style>
+:root { color-scheme: light; }
+body {
+  margin: 0;
+  background: #f6f7f9;
+  color: #202124;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  line-height: 1.65;
+}
+main {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 48px 28px 72px;
+  background: #fff;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+h1 { font-size: 34px; margin: 0 0 18px; }
+h2 { font-size: 24px; margin: 34px 0 12px; border-top: 1px solid #e6e8eb; padding-top: 22px; }
+h3 { font-size: 18px; margin: 24px 0 8px; }
+p { margin: 10px 0; }
+ul, ol { margin: 10px 0 14px 24px; padding: 0; }
+li { margin: 5px 0; }
+a { color: #0b57d0; }
+code, pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+pre {
+  background: #f1f3f5;
+  border: 1px solid #e2e5e9;
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  line-height: 1.45;
+}
+p code, li code {
+  background: #f1f3f5;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+@media print {
+  body { background: #fff; }
+  main { padding: 24px; max-width: none; }
+}
+</style>
+</head>
+<body>
+<main>
+<h1>日报 Skill 安装指南</h1>
+<p>版本日期: 2026-04-28</p>
+<p>这份指南给不会写代码的同事使用。照着做完以后，就可以让 Codex 生成每日工作日报，并自动写入飞书的 <code>周报记录</code> 文件夹。</p>
+<h2>这个 Skill 能做什么</h2>
+<ul>
+<li>汇总当天 Codex 会话、Claude Code 会话、飞书消息、飞书日历、飞书会议纪要、Chrome 浏览记录。</li>
+<li>生成一份结构化日报。</li>
+<li>自动创建或复用飞书云文档文件夹 <code>周报记录</code>。</li>
+<li>自动创建或复用本周文档，例如 <code>第18周 04/27-05/03</code>。</li>
+<li>自动写入当天日报区段，例如 <code>2026年04月28日（周二）</code>。</li>
+<li>自动维护 <code>改动记录</code>，记录编辑时间、编辑人和改动摘要。</li>
+<li>可选发送飞书通知给自己。</li>
+</ul>
+<h2>安装前准备</h2>
+<p>请先确认电脑是 macOS，并且已经安装 Codex。这个版本目前按 macOS + Chrome + 飞书设计。</p>
+<p>需要准备:</p>
+<ul>
+<li>飞书账号。</li>
+<li>可以打开“终端”应用。</li>
+<li>可以安装 Node.js / npm。</li>
+<li>可选: Claude Code CLI。没有也能运行，但日报会用较基础的自动格式。</li>
+</ul>
+<h2>第 1 步: 安装 Daily Report Skill</h2>
+<p>拿到安装包后，通常会看到一个文件夹:</p>
+<pre><code>daily-report</code></pre>
+<p>把它放到 Codex 的 skills 目录。</p>
+<h3>方法 A: 用 Finder 安装</h3>
+<ol>
+<li>双击解压安装包。</li>
+<li>打开 Finder。</li>
+<li>按 <code>Command + Shift + G</code>。</li>
+<li>输入:</li>
+</ol>
+<p>   ```text</p>
+<p>   ~/.codex/skills</p>
+<p>   ```</p>
+<ol>
+<li>如果提示目录不存在，先输入:</li>
+</ol>
+<p>   ```text</p>
+<p>   ~/.codex</p>
+<p>   ```</p>
+<p>   然后新建一个名为 <code>skills</code> 的文件夹。</p>
+<ol>
+<li>把解压出来的 <code>daily-report</code> 文件夹拖进去。</li>
+<li>完全退出 Codex，再重新打开。</li>
+</ol>
+<h3>方法 B: 复制命令安装</h3>
+<p>如果 <code>daily-report</code> 文件夹在“下载”目录，打开“终端”，粘贴下面两行:</p>
+<pre><code>mkdir -p ~/.codex/skills
+cp -R ~/Downloads/daily-report ~/.codex/skills/</code></pre>
+<p>然后重启 Codex。</p>
+<h2>第 2 步: 安装 lark-cli</h2>
+<p><code>lark-cli</code> 是连接飞书的命令行工具。Daily Report Skill 需要用它读取日历、消息、会议纪要，并写入云文档。</p>
+<h3>2.1 检查是否已经安装 Node.js</h3>
+<p>打开“终端”，粘贴:</p>
+<pre><code>node -v
+npm -v</code></pre>
+<p>如果两行都显示版本号，例如 <code>v20.x.x</code> 和 <code>10.x.x</code>，说明已经有 Node.js，可以继续下一步。</p>
+<p>如果提示 <code>command not found</code>，请先安装 Node.js:</p>
+<ol>
+<li>打开 <a href="https://nodejs.org/">Node.js 官网</a>。</li>
+<li>下载 LTS 版本。</li>
+<li>一路点“继续 / 安装”。</li>
+<li>安装完成后，重新打开“终端”，再运行:</li>
+</ol>
+<p>   ```bash</p>
+<p>   node -v</p>
+<p>   npm -v</p>
+<p>   ```</p>
+<h3>2.2 安装飞书 CLI</h3>
+<p>在“终端”粘贴:</p>
+<pre><code>npm install -g @larksuite/cli</code></pre>
+<p>安装完成后检查:</p>
+<pre><code>lark-cli --version</code></pre>
+<p>能看到版本号就表示安装成功。</p>
+<h2>第 3 步: 登录飞书授权</h2>
+<p>在“终端”粘贴下面这行:</p>
+<pre><code>lark-cli auth login --domain im,calendar,drive,docs,contact,minutes</code></pre>
+<p>终端会显示一个登录链接或验证码。按照提示打开浏览器，登录飞书并同意授权。</p>
+<p>授权完成后检查:</p>
+<pre><code>lark-cli auth status</code></pre>
+<p>看到 <code>&quot;tokenStatus&quot;: &quot;valid&quot;</code> 就表示成功。</p>
+<h2>第 4 步: 做安装检查</h2>
+<p>打开“终端”，粘贴:</p>
+<pre><code>python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --install-check</code></pre>
+<p>成功时会看到类似:</p>
+<pre><code>Daily Report Skill 安装检查
+- Python: 3.9.6
+- lark-cli: /opt/homebrew/bin/lark-cli
+- 飞书授权: valid
+- 飞书用户: 你的名字</code></pre>
+<p>如果这里不成功，先不要继续生成日报。看本文末尾“常见问题”。</p>
+<h2>第 5 步: 先预览，不写入飞书</h2>
+<p>第一次建议先运行预览:</p>
+<pre><code>python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --dry-run</code></pre>
+<p>如果电脑没有 Claude Code CLI，可以先用:</p>
+<pre><code>python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --dry-run --no-ai</code></pre>
+<p>预览成功后，终端会打印一份日报内容，但不会写入飞书。</p>
+<h2>第 6 步: 正式生成今天日报</h2>
+<p>确认预览没问题后，运行:</p>
+<pre><code>python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py</code></pre>
+<p>成功后会显示类似:</p>
+<pre><code>完成！文档: https://feishu.cn/docx/xxxxxxxx</code></pre>
+<p>打开这个链接就能看到日报。</p>
+<h2>第 7 步: 在 Codex 里使用</h2>
+<p>重启 Codex 后，可以直接对 Codex 说:</p>
+<pre><code>用 daily-report 生成今天的日报</code></pre>
+<p>也可以说:</p>
+<pre><code>用 daily-report 预览一下今天日报，不要写飞书</code></pre>
+<p>生成指定日期:</p>
+<pre><code>用 daily-report 生成 2026-04-28 的日报</code></pre>
+<h2>可选配置</h2>
+<p>第一次可以创建配置文件:</p>
+<pre><code>python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --init-config</code></pre>
+<p>配置文件位置:</p>
+<pre><code>~/.daily-report-skill/config.json</code></pre>
+<p>常用配置:</p>
+<ul>
+<li><code>folder_name</code>: 飞书文件夹名称，默认 <code>周报记录</code>。</li>
+<li><code>send_notification</code>: 是否发送飞书通知，默认 <code>true</code>。</li>
+<li><code>notify_user_id</code>: 要通知的飞书 open_id。留空时默认通知当前授权用户。</li>
+<li><code>ai_enabled</code>: 是否使用本地 AI CLI 总结，默认 <code>true</code>。</li>
+<li><code>chrome_profile</code>: Chrome 用户目录。常见值是 <code>Default</code> 或 <code>Profile 1</code>。</li>
+</ul>
+<p>如果你不想收到飞书通知，可以运行:</p>
+<pre><code>python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --no-notify</code></pre>
+<h2>可选: 每天自动运行</h2>
+<p>建议先手动成功运行 2 次，再设置自动运行。</p>
+<p>如果想让它每天 18:30 自动生成日报，把下面整段复制到“终端”:</p>
+<pre><code>mkdir -p ~/Library/LaunchAgents
+cat &gt; ~/Library/LaunchAgents/com.company.daily-report.plist &lt;&lt;PLIST
+&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;!DOCTYPE plist PUBLIC &quot;-//Apple//DTD PLIST 1.0//EN&quot; &quot;http://www.apple.com/DTDs/PropertyList-1.0.dtd&quot;&gt;
+&lt;plist version=&quot;1.0&quot;&gt;
+&lt;dict&gt;
+  &lt;key&gt;Label&lt;/key&gt;
+  &lt;string&gt;com.company.daily-report&lt;/string&gt;
+  &lt;key&gt;ProgramArguments&lt;/key&gt;
+  &lt;array&gt;
+    &lt;string&gt;/usr/bin/python3&lt;/string&gt;
+    &lt;string&gt;$HOME/.codex/skills/daily-report/scripts/generate_daily_report.py&lt;/string&gt;
+  &lt;/array&gt;
+  &lt;key&gt;StartCalendarInterval&lt;/key&gt;
+  &lt;dict&gt;
+    &lt;key&gt;Hour&lt;/key&gt;
+    &lt;integer&gt;18&lt;/integer&gt;
+    &lt;key&gt;Minute&lt;/key&gt;
+    &lt;integer&gt;30&lt;/integer&gt;
+  &lt;/dict&gt;
+  &lt;key&gt;StandardOutPath&lt;/key&gt;
+  &lt;string&gt;$HOME/.daily-report-skill/launchd.out.log&lt;/string&gt;
+  &lt;key&gt;StandardErrorPath&lt;/key&gt;
+  &lt;string&gt;$HOME/.daily-report-skill/launchd.err.log&lt;/string&gt;
+&lt;/dict&gt;
+&lt;/plist&gt;
+PLIST
+launchctl unload ~/Library/LaunchAgents/com.company.daily-report.plist 2&gt;/dev/null || true
+launchctl load ~/Library/LaunchAgents/com.company.daily-report.plist</code></pre>
+<p>检查是否已加载:</p>
+<pre><code>launchctl list | grep daily-report</code></pre>
+<p>取消自动运行:</p>
+<pre><code>launchctl unload ~/Library/LaunchAgents/com.company.daily-report.plist
+rm ~/Library/LaunchAgents/com.company.daily-report.plist</code></pre>
+<h2>常见问题</h2>
+<h3>1. <code>lark-cli: command not found</code></h3>
+<p>说明飞书 CLI 没安装成功。重新运行:</p>
+<pre><code>npm install -g @larksuite/cli
+lark-cli --version</code></pre>
+<p>如果仍然失败，关闭“终端”后重新打开再试。</p>
+<h3>2. <code>tokenStatus</code> 不是 <code>valid</code></h3>
+<p>说明飞书登录过期或授权不完整。重新运行:</p>
+<pre><code>lark-cli auth login --domain im,calendar,drive,docs,contact,minutes
+lark-cli auth status</code></pre>
+<h3>3. 飞书文档没有写入</h3>
+<p>先运行:</p>
+<pre><code>python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --install-check</code></pre>
+<p>如果授权正常，再检查飞书是否允许创建云文档，以及账号是否有 Drive / Docs 权限。</p>
+<h3>4. 日报内容太粗糙</h3>
+<p>通常是因为没有本地 AI CLI。可以先继续使用基础版；如果公司统一提供 Claude Code CLI，再安装后重新运行。</p>
+<p>临时不用 AI:</p>
+<pre><code>python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --no-ai</code></pre>
+<h3>5. Chrome 浏览记录为空</h3>
+<p>可能 Chrome 用户目录不是 <code>Default</code>。打开:</p>
+<pre><code>~/Library/Application Support/Google/Chrome/</code></pre>
+<p>看看里面有没有 <code>Profile 1</code>、<code>Profile 2</code>。然后修改:</p>
+<pre><code>~/.daily-report-skill/config.json</code></pre>
+<p>把 <code>chrome_profile</code> 改成对应目录名。</p>
+<h3>6. 日报重复出现</h3>
+<p>脚本会尝试替换同一天标题的区段。请确认飞书文档里的标题格式是:</p>
+<pre><code>2026年04月28日（周二）</code></pre>
+<p>不要手动改成其他格式，否则脚本会认为这是新的一天并追加新区段。</p>
+<h3>7. 去哪里看日志</h3>
+<p>日志位置:</p>
+<pre><code>~/.daily-report-skill/report.log</code></pre>
+<p>如果是自动运行，额外看:</p>
+<pre><code>~/.daily-report-skill/launchd.out.log
+~/.daily-report-skill/launchd.err.log</code></pre>
+<h2>卸载</h2>
+<p>删除 skill:</p>
+<pre><code>rm -rf ~/.codex/skills/daily-report</code></pre>
+<p>删除配置和日志:</p>
+<pre><code>rm -rf ~/.daily-report-skill</code></pre>
+<p>如果设置过自动运行，先执行:</p>
+<pre><code>launchctl unload ~/Library/LaunchAgents/com.company.daily-report.plist
+rm ~/Library/LaunchAgents/com.company.daily-report.plist</code></pre>
+<h2>给管理员或推广人的说明</h2>
+<p>对外分发时，只需要把 <code>daily-report</code> 文件夹打包给同事。不要把个人的 <code>~/.daily-report-skill/config.json</code>、飞书 token、日志文件一起发出去。</p>
+<p>建议推广话术:</p>
+<pre><code>装好这个 Daily Report Skill 后，在 Codex 里说“用 daily-report 生成今天日报”，它会自动把当天工作记录汇总到飞书周报文档。</code></pre>
+</main>
+</body>
+</html>
