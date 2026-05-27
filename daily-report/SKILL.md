@@ -77,17 +77,44 @@ The script creates or reuses:
 
 - Feishu Drive folder: `folder_name`
 - Weekly document title: `第{ISO周数}周 MM/DD-MM/DD`
-- Daily section title: `YYYY年MM月DD日（周X）`
+- Daily section title: `## YYYY年MM月DD日（周X）`
 
-For each successful document write, the script also adds or updates a `改动记录` section with edit time, editor name from Feishu auth, and a concise change summary.
+### Faithful per-session recording
+
+Every Claude Code session and every Codex session for the day is enumerated
+individually in the report — never collapsed into a single vague line. The
+prompt keeps each Claude session's full instruction arc (opener + follow-ups)
+and asks the model to judge the real goal/output from the whole arc. Recurring
+hourly Codex automations (titles starting `Automation:`) are the one exception:
+they are folded by automation ID into one entry with a run count, time span, and
+latest progress, so background loops don't drown out genuine interactive work.
+
+### Idempotent re-runs (v2 docs API)
+
+Writing the daily section uses the **v2** `docs +update` API only:
+
+- **First write of the day** → `--command append --doc-format markdown`.
+- **Re-run for the same day** → `--command str_replace --doc-format markdown`
+  with the `前缀...后缀` ellipsis pattern `## <日期>（周X）...---`, replacing the
+  whole day block in place. str_replace returns no `updated_blocks_count`, so
+  success is detected via `data.result == "success"`; a missing pattern returns
+  `result: "failed"` and the code falls back to `append`.
+
+This stays atomic only because the date heading is the block's **only** `##`.
+The script normalizes the model output before writing: any stray `##` is demoted
+to `###`, and stray horizontal rules (`---`/`***`/`___`) are dropped so the only
+`---` in the block is the trailing separator the pattern keys off. The four body
+sections (今日工作总结 / 主要项目进展 / AI 会话明细 / 沟通&会议) are therefore
+always `###`.
 
 ## Data Sources
 
 The script reads local and Feishu data for the target date:
 
-- `~/.codex/state_5.sqlite` for Codex sessions
-- `~/.claude/history.jsonl` for Claude Code sessions
-- Feishu message search, calendar agenda, and minutes search through `lark-cli`
+- `~/.codex/state_5.sqlite` for Codex sessions (interactive kept individually, automations folded by ID)
+- `~/.claude/history.jsonl` for Claude Code sessions (grouped by `sessionId`, full prompt arc kept)
+- Feishu message search and calendar agenda (with video-conference flag) through `lark-cli`
+- Feishu minutes (妙记) via `minutes +search` as **both owner and participant** (deduped by token); titles read from the `display_info` field
 - Chrome history from `~/Library/Application Support/Google/Chrome/{chrome_profile}/History`
 
 Chrome history is copied to a temporary SQLite file before reading so it can work while Chrome is open.
@@ -98,5 +125,5 @@ Chrome history is copied to a temporary SQLite file before reading so it can wor
 - Invalid Feishu token: run `lark-cli auth status`, then rerun `lark-cli auth login ...`.
 - No AI summary: prioritize installing/opening Codex and running `codex login status`; Claude Code CLI is only the fallback. Use `--no-ai` only when a basic raw-record report is acceptable.
 - Empty Chrome history: check `chrome_profile` in config.
-- Duplicate daily sections: rerun after confirming the existing section heading matches `## YYYY年MM月DD日（周X）`.
+- Duplicate daily sections on re-run: caused by inner `##` headings (the str_replace `## …（周X）...---` pattern is bounded by the first `##`/`---`). The script demotes `##`→`###` and strips stray `---` automatically; if you hand-edit the doc, keep the date heading as the block's only `##` and one trailing `---`.
 - Permission errors on Feishu docs: rerun auth with all required domains and use `--install-check`.

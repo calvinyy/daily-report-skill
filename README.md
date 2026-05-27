@@ -14,10 +14,11 @@ For non-technical installation steps, open one of these files:
 
 - Collects Codex sessions, Claude Code sessions, Feishu messages, Feishu calendar events, Feishu minutes, and Chrome history.
 - Generates a structured daily report with Codex first and Claude Code as fallback.
+- Records **every** Claude/Codex session individually (no omissions); folds recurring hourly Codex automations into one entry per task.
 - Fails with an actionable Codex setup message if neither Codex nor Claude is available, unless `--no-ai` is explicitly used.
 - Creates or reuses a Feishu Drive folder named `周报记录`.
 - Creates or reuses a weekly Feishu document.
-- Writes the daily section and maintains a `改动记录` section.
+- Writes the daily section via the **v2** `docs +update` API and re-runs idempotently in place (str_replace, with append on first write).
 - Optionally sends a Feishu notification.
 
 ## Skill Folder

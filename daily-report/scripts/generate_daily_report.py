@@ -5,6 +5,11 @@ Generate a Feishu/Lark daily work report.
 The script collects local work activity, asks Codex first and Claude second to
 summarize it, writes the report to a weekly Feishu document, and can notify the
 current user. It uses only Python's standard library plus external CLIs.
+
+Faithful-recording rule: every Claude Code session and every Codex session for
+the day is enumerated individually in the report — not collapsed into a single
+vague line. Recurring hourly Codex automations are the one exception: they are
+folded by automation ID into one entry with a run count.
 """
 
 from __future__ import annotations
@@ -268,11 +273,13 @@ def get_or_create_weekly_doc(
             "+create",
             "--api-version",
             "v2",
-            "--folder-token",
+            "--parent-token",
             folder_token,
             "--title",
             title,
-            "--markdown",
+            "--doc-format",
+            "markdown",
+            "--content",
             f"# {title}\n\n",
         ],
         timeout=60,
@@ -289,6 +296,20 @@ def get_or_create_weekly_doc(
 
 
 def update_doc_section(lark: LarkClient, doc_token: str, heading: str, section_md: str) -> None:
+    """Write today's section to the weekly doc via the v2 docs API.
+
+    Re-run case: replace the existing same-day block in place. v2 has no
+    `selection-by-title`, so we use markdown `str_replace` with the `前缀...后缀`
+    ellipsis to match the whole day block — from the date heading (`## …`) up to
+    its trailing `---` separator — and swap in the new block. This stays atomic
+    only because the date heading is the block's *only* `##` (inner sections are
+    `###`; see the h2-demotion in build_section()).
+
+    First-write case: the pattern isn't found (data.result == "failed"), so fall
+    back to `append`. str_replace returns no updated_blocks_count, so success is
+    keyed off data.result alone.
+    """
+    replacement = section_md.rstrip()
     result = lark.call(
         [
             "docs",
@@ -297,83 +318,44 @@ def update_doc_section(lark: LarkClient, doc_token: str, heading: str, section_m
             "v2",
             "--doc",
             doc_token,
-            "--mode",
-            "replace_range",
-            "--selection-by-title",
-            heading,
-            "--markdown",
+            "--command",
+            "str_replace",
+            "--doc-format",
+            "markdown",
+            "--pattern",
+            f"{heading}...---",
+            "--content",
+            replacement,
+        ],
+        timeout=60,
+    )
+    data = result.get("data", {}) if isinstance(result, dict) else {}
+    replaced = bool(result.get("ok")) and data.get("result") in ("success", "partial_success")
+    if replaced:
+        log("  已替换现有区段 (v2 str_replace)")
+        return
+
+    appended = lark.call(
+        [
+            "docs",
+            "+update",
+            "--api-version",
+            "v2",
+            "--doc",
+            doc_token,
+            "--command",
+            "append",
+            "--doc-format",
+            "markdown",
+            "--content",
             section_md,
         ],
         timeout=60,
     )
-    if result.get("ok") or result.get("revision") or result.get("data", {}).get("revision_id"):
-        log("  已替换现有日报区段")
-        return
-
-    lark.call(
-        [
-            "docs",
-            "+update",
-            "--api-version",
-            "v2",
-            "--doc",
-            doc_token,
-            "--mode",
-            "append",
-            "--markdown",
-            section_md,
-        ],
-        timeout=60,
-    )
-    log("  已追加新日报区段")
-
-
-def append_change_record(
-    lark: LarkClient,
-    doc_token: str,
-    editor: str,
-    change_summary: str,
-) -> None:
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    entry = f"- {timestamp} | {editor} | {change_summary}\n"
-    result = lark.call(
-        [
-            "docs",
-            "+update",
-            "--api-version",
-            "v2",
-            "--doc",
-            doc_token,
-            "--mode",
-            "insert_after",
-            "--selection-by-title",
-            "## 改动记录",
-            "--markdown",
-            entry,
-        ],
-        timeout=60,
-    )
-    if result.get("ok") or result.get("revision") or result.get("data", {}).get("revision_id"):
-        log("  已更新改动记录")
-        return
-
-    change_log = f"\n## 改动记录\n\n{entry}\n"
-    lark.call(
-        [
-            "docs",
-            "+update",
-            "--api-version",
-            "v2",
-            "--doc",
-            doc_token,
-            "--mode",
-            "append",
-            "--markdown",
-            change_log,
-        ],
-        timeout=60,
-    )
-    log("  已创建改动记录")
+    if appended.get("ok"):
+        log("  已追加新区段 (v2 append)")
+    else:
+        log(f"  ⚠️ 写入失败: {appended.get('_error') or appended}")
 
 
 def send_notification(
@@ -407,6 +389,8 @@ def send_notification(
     log(f"  通知发送: {'成功' if ok else '失败'}")
 
 
+# ── data collectors ───────────────────────────────────────────────────────────
+
 def get_codex_sessions(target_date: date) -> list[dict[str, str]]:
     db_path = Path.home() / ".codex" / "state_5.sqlite"
     if not db_path.exists():
@@ -435,7 +419,7 @@ def get_codex_sessions(target_date: date) -> list[dict[str, str]]:
                     "time": datetime.fromtimestamp(created_at / 1000).strftime("%H:%M") if created_at else "?",
                     "title": display_title,
                     "project": Path(cwd).name if cwd else "unknown",
-                    "first_msg": first_msg[:300],
+                    "first_msg": first_msg[:500],
                     "last_summary": read_codex_last_summary(rollout_path),
                 }
             )
@@ -471,15 +455,75 @@ def read_codex_last_summary(rollout_path: str) -> str:
         return ""
 
 
-def get_claude_sessions(target_date: date) -> list[dict[str, str]]:
+def parse_codex_automation(title: str) -> tuple[str | None, str]:
+    """Codex automation titles look like:
+        'Automation: <name>\nAutomation ID: <id>\n...'
+    Returns (automation_id, friendly_name); non-automation titles -> (None, title)."""
+    if not title or not title.startswith("Automation:"):
+        return None, (title or "未命名")
+    name = title.split("\n", 1)[0].replace("Automation:", "").strip()
+    aid = name
+    for line in title.split("\n"):
+        if line.strip().startswith("Automation ID:"):
+            aid = line.split(":", 1)[1].strip()
+            break
+    return aid, name
+
+
+def group_codex_sessions(
+    codex_sessions: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], dict[str, dict[str, Any]]]:
+    """Split into (interactive, automations). Recurring automation runs are folded
+    by automation ID — one entry per task with run count, time span and the most
+    recent progress summary — so hourly background loops don't drown out the real
+    interactive work."""
+    interactive: list[dict[str, str]] = []
+    autos: dict[str, dict[str, Any]] = {}
+    for session in codex_sessions:
+        aid, name = parse_codex_automation(session.get("title", ""))
+        if aid is None:
+            interactive.append(session)
+            continue
+        group = autos.get(aid)
+        if group is None:
+            group = autos[aid] = {
+                "name": name,
+                "project": session["project"],
+                "count": 0,
+                "times": [],
+                "last_summary": "",
+            }
+        group["count"] += 1
+        group["times"].append(session["time"])
+        if session.get("last_summary"):
+            group["last_summary"] = session["last_summary"]
+    return interactive, autos
+
+
+def _is_noise_prompt(text: str) -> bool:
+    """Pure slash-commands / shell escapes / blank lines carry no work signal —
+    drop them from a session's follow-up list (the kickoff line is kept anyway)."""
+    text = text.strip()
+    if not text:
+        return True
+    if text.startswith("/") or text.startswith("!"):
+        return True
+    return False
+
+
+def get_claude_sessions(target_date: date) -> list[dict[str, Any]]:
+    """Group Claude history.jsonl by sessionId and keep the *full* sequence of
+    user prompts per session. history.jsonl records only user messages, so the
+    prompt arc is the best proxy for "what this session worked on"; keeping all
+    of it (not just the first line) stops real deliverables from being collapsed
+    into a single vague entry."""
     history_path = Path.home() / ".claude" / "history.jsonl"
     if not history_path.exists():
         return []
 
     day_start_ms = int(datetime.combine(target_date, datetime.min.time()).timestamp() * 1000)
     day_end_ms = int(datetime.combine(target_date, datetime.max.time()).timestamp() * 1000)
-    sessions: list[dict[str, str]] = []
-    seen: set[str] = set()
+    by_sid: dict[str, dict[str, Any]] = {}
     try:
         for line in history_path.read_text(encoding="utf-8", errors="replace").splitlines():
             if not line.strip():
@@ -489,19 +533,23 @@ def get_claude_sessions(target_date: date) -> list[dict[str, str]]:
             except Exception:
                 continue
             timestamp = entry.get("timestamp", 0)
+            if not (day_start_ms <= timestamp <= day_end_ms):
+                continue
+            display = str(entry.get("display", "") or "").strip()
+            if not display:
+                continue
             session_id = entry.get("sessionId", "")
-            if day_start_ms <= timestamp <= day_end_ms and session_id not in seen:
-                seen.add(session_id)
-                sessions.append(
-                    {
-                        "time": datetime.fromtimestamp(timestamp / 1000).strftime("%H:%M"),
-                        "display": str(entry.get("display", "")),
-                        "project": Path(str(entry.get("project", ""))).name or "unknown",
-                    }
-                )
+            record = by_sid.get(session_id)
+            if record is None:
+                record = by_sid[session_id] = {
+                    "time": datetime.fromtimestamp(timestamp / 1000).strftime("%H:%M"),
+                    "project": Path(str(entry.get("project", ""))).name or "unknown",
+                    "msgs": [],
+                }
+            record["msgs"].append(display)
     except Exception:
         return []
-    return sessions
+    return sorted(by_sid.values(), key=lambda r: r["time"])
 
 
 def get_feishu_messages(lark: LarkClient, target_date: date, timezone_offset: str) -> list[dict[str, Any]]:
@@ -543,21 +591,28 @@ def get_feishu_calendar(lark: LarkClient, target_date: date, timezone_offset: st
 
 
 def get_meeting_minutes(lark: LarkClient, target_date: date) -> list[dict[str, Any]]:
+    """Search Feishu minutes (妙记) for the day as both owner and participant,
+    deduped by token. The +search payload puts the title in `display_info` and
+    metadata (owner/start/duration/keywords) in `description` — reading a
+    non-existent `title` field always came up empty."""
     date_str = target_date.strftime("%Y-%m-%d")
-    result = lark.call(
-        [
-            "minutes",
-            "+search",
-            "--start",
-            date_str,
-            "--end",
-            date_str,
-            "--participant-ids",
-            "me",
-        ],
-        timeout=45,
-    )
-    return result.get("data", {}).get("items", []) if result.get("ok") else []
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for role in ("--owner-ids", "--participant-ids"):
+        result = lark.call(
+            ["minutes", "+search", "--start", date_str, "--end", date_str, role, "me", "--page-size", "30"],
+            timeout=45,
+        )
+        if not result.get("ok"):
+            continue
+        for item in result.get("data", {}).get("items", []):
+            token = item.get("token")
+            if token and token in seen:
+                continue
+            if token:
+                seen.add(token)
+            items.append(item)
+    return items
 
 
 def get_chrome_history(target_date: date, profile: str, skip_domains: set[str]) -> dict[str, dict[str, Any]]:
@@ -609,10 +664,12 @@ def get_chrome_history(target_date: date, profile: str, skip_domains: set[str]) 
             pass
 
 
+# ── prompt building ────────────────────────────────────────────────────────────
+
 def build_prompt(
     target_date: date,
     codex_sessions: list[dict[str, str]],
-    claude_sessions: list[dict[str, str]],
+    claude_sessions: list[dict[str, Any]],
     messages: list[dict[str, Any]],
     calendar_events: list[dict[str, Any]],
     minutes_items: list[dict[str, Any]],
@@ -621,30 +678,70 @@ def build_prompt(
     date_str = target_date.strftime("%Y年%m月%d日")
     lines = [f"以下是 {date_str} 的原始工作记录，请整理成日报。\n"]
 
-    if codex_sessions:
-        lines.append("## Codex 工作会话")
-        for session in codex_sessions:
-            lines.append(f"- {session['time']} [{session['project']}] 任务: {session['title']}")
-            if session["last_summary"]:
-                lines.append(f"  完成情况: {session['last_summary'][:300]}")
+    # Codex — interactive listed individually, hourly automations folded by ID.
+    codex_interactive, codex_autos = group_codex_sessions(codex_sessions)
+    if codex_interactive or codex_autos:
+        lines.append(f"## Codex 会话（共 {len(codex_sessions)} 个原始 session，逐个记录，不要遗漏）")
+        for idx, session in enumerate(codex_interactive, 1):
+            title = (session.get("title") or "").split("\n", 1)[0]
+            lines.append(f"### Codex交互{idx}｜{session['time']}｜项目[{session['project']}]｜{title}")
+            if session.get("first_msg"):
+                lines.append(f"  用户指令：{session['first_msg'][:400]}")
+            if session.get("last_summary"):
+                lines.append(f"  完成/产出：{session['last_summary'][:400]}")
+        for _aid, group in codex_autos.items():
+            span = f"{group['times'][0]}–{group['times'][-1]}" if group["times"] else ""
+            lines.append(
+                f"### Codex自动化｜{group['name']}｜项目[{group['project']}]｜当天运行 {group['count']} 次（{span}）"
+            )
+            if group["last_summary"]:
+                lines.append(f"  最新进展：{group['last_summary'][:400]}")
         lines.append("")
 
+    # Claude Code — every session with its full instruction arc.
     if claude_sessions:
-        lines.append("## Claude Code 对话")
-        for session in claude_sessions:
-            lines.append(f"- {session['time']} [{session['project']}] {session['display'][:150]}")
+        lines.append(f"## Claude Code 会话（共 {len(claude_sessions)} 个 session，逐个记录，不要遗漏）")
+        for idx, session in enumerate(claude_sessions, 1):
+            msgs = session["msgs"]
+            substantive = [m for m in msgs if not _is_noise_prompt(m)]
+            if substantive:
+                opener, followups = substantive[0], substantive[1:]
+            else:
+                opener, followups = msgs[0], []
+            lines.append(f"### Claude会话{idx}｜{session['time']}｜项目[{session['project']}]｜共 {len(msgs)} 条指令")
+            lines.append(f"  开场指令：{opener[:300]}")
+            if followups:
+                lines.append("  后续指令（按时间）：")
+                for msg in followups[:12]:
+                    lines.append(f"    · {msg[:120]}")
+                if len(followups) > 12:
+                    lines.append(f"    · …（另有 {len(followups) - 12} 条同会话指令）")
         lines.append("")
 
+    # Calendar — time + video-conference flag.
     if calendar_events:
-        lines.append("## 今日日程")
+        lines.append("## 今日飞书会议 / 日程")
         for event in calendar_events:
-            lines.append(f"- {event.get('summary') or event.get('title') or '未知'}")
+            summary = event.get("summary") or event.get("title") or "未知"
+            start_time = event.get("start_time", {})
+            clock = ""
+            if isinstance(start_time, dict):
+                dt = start_time.get("datetime", "")
+                clock = dt[11:16] if len(dt) >= 16 else ""
+            is_vc = bool((event.get("vchat") or {}).get("meeting_url"))
+            lines.append(f"- {clock} {summary}".strip() + ("（视频会议）" if is_vc else ""))
         lines.append("")
 
+    # Minutes (妙记) — title from display_info, metadata from description.
     if minutes_items:
-        lines.append("## 会议纪要")
+        lines.append("## 会议纪要（妙记）")
         for item in minutes_items:
-            lines.append(f"- {item.get('title', '未命名会议')}")
+            title = item.get("display_info") or item.get("title") or "未命名会议"
+            desc = (item.get("description") or "").replace("<b>", "").replace("</b>", "")
+            url = item.get("app_link") or item.get("url") or ""
+            lines.append(f"- {title}" + (f"（{url}）" if url else ""))
+            if desc:
+                lines.append(f"  {desc[:200]}")
         lines.append("")
 
     if messages:
@@ -666,21 +763,29 @@ def build_prompt(
 
     lines.append(
         """---
-请按以下格式输出日报，只写工作内容，忽略闲聊、权限配置、环境安装等琐事，不需要 markdown 代码块:
+请按以下格式输出日报（不需要 markdown 代码块）。
 
-## 今日工作总结
-用 2-3 句话概括今天做了什么、有什么产出。
+**标题层级要求（很重要）：下面四个区段标题一律用三级标题 `###`，不要用 `##`。`##` 只保留给外层的日期标题，正文里出现 `##` 会破坏文档结构。**
 
-## 主要项目进展
-按项目分组列出具体完成的事情和产出，有层次。
+**最重要的内容规则：上面列出的每一个 Claude Code session 和每一个 Codex 会话，都必须在「AI 会话明细」里出现，逐个记录，不得遗漏、不得把多个 session 笼统合并成一句。** 即使某个 session 看起来很小，也要写一行说明它做了什么。只有 session *内部* 的环境配置 / 授权 / 纯闲聊可以略去，session 本身不能略去。
 
-## AI 工具协作
-简要记录 Claude / Codex 参与了哪些有价值的工作任务。
+### 今日工作总结
+2-3 句话概括今天做了什么、有哪些关键产出。
 
-## 沟通 & 会议
-如无则省略。
+### 主要项目进展
+按项目分组，列出具体完成的事情和产出（产出了飞书文档/PR/commit/分支/报告就写出来，能带链接带链接）。
 
-注意: 只记录自己的工作产出。"""
+### AI 会话明细（逐个 session，禁止遗漏）
+分「Claude Code」和「Codex」两个子标题（用加粗或四级标题，不要用 ##）：
+- 每个 session 写一条：`时间 · 项目 · 做了什么 / 产出了什么`。要结合该 session 的全部指令判断它的真实目标与结果，而不是只看开场白。
+- 若同一 session 有多步推进（如先规划再细化排期再分工），要体现这条主线。
+- Codex 的定时自动化任务已按任务归并，按「任务名 · 当天运行N次 · 最新进展」写一条即可。
+
+### 沟通 & 会议
+- 逐条列出今日飞书会议（时间 + 主题，标注是否视频会议）；有会议纪要则概述要点。
+- 末尾一句话概述飞书沟通量（多少会话 / 多少消息）。
+
+注意：略去环境配置、授权等背景噪音，但「有实质工作的 session 必须逐个出现」优先级最高。"""
     )
     return "\n".join(lines)
 
@@ -787,36 +892,65 @@ def summarize_with_ai(codex_cli: str, claude_cli: str, prompt: str, enabled: boo
 
 def fallback_format(
     codex_sessions: list[dict[str, str]],
-    claude_sessions: list[dict[str, str]],
+    claude_sessions: list[dict[str, Any]],
     calendar_events: list[dict[str, Any]],
     messages: list[dict[str, Any]],
     chrome: dict[str, dict[str, Any]],
 ) -> str:
-    lines = ["## 今日工作总结", "AI 总结不可用，以下为自动整理的原始记录。", ""]
+    lines = ["### 今日工作总结", "AI 总结不可用，以下为自动整理的原始记录。", ""]
     if codex_sessions:
-        lines += ["## Codex 会话"]
-        for session in codex_sessions:
-            lines.append(f"- {session['time']} [{session['project']}] {session['title']}")
+        interactive, autos = group_codex_sessions(codex_sessions)
+        lines += ["### Codex 会话"]
+        for session in interactive:
+            title = (session.get("title") or "").split("\n", 1)[0]
+            lines.append(f"- {session['time']} [{session['project']}] {title}")
+        for _aid, group in autos.items():
+            lines.append(f"- [自动化] {group['name']} [{group['project']}] ×{group['count']} 次")
         lines.append("")
     if claude_sessions:
-        lines += ["## Claude 对话"]
+        lines += ["### Claude Code 会话"]
         for session in claude_sessions:
-            lines.append(f"- {session['time']} [{session['project']}] {session['display'][:100]}")
+            opener = next((m for m in session["msgs"] if not _is_noise_prompt(m)), session["msgs"][0])
+            lines.append(f"- {session['time']} [{session['project']}] {opener[:100]}（共 {len(session['msgs'])} 条指令）")
         lines.append("")
     if calendar_events:
-        lines += ["## 日程"]
+        lines += ["### 日程"]
         for event in calendar_events:
             lines.append(f"- {event.get('summary') or event.get('title') or '未知'}")
         lines.append("")
     if messages:
         chat_counts = {str(message.get("chat_id", "")) for message in messages}
-        lines += ["## 飞书沟通", f"- 参与 {len(chat_counts)} 个会话，共 {len(messages)} 条消息。", ""]
+        lines += ["### 飞书沟通", f"- 参与 {len(chat_counts)} 个会话，共 {len(messages)} 条消息。", ""]
     domains = [(domain, value) for domain, value in chrome.items() if not domain.startswith("_")][:10]
     if domains:
-        lines += ["## 浏览记录"]
+        lines += ["### 浏览记录"]
         for domain, value in domains:
             lines.append(f"- {domain}: {value['count']} 次")
     return "\n".join(lines).strip()
+
+
+def normalize_summary(summary: str) -> str:
+    """Keep the day block atomic for re-runs:
+      • demote any stray h2 -> h3 (the date heading is the block's only `##`)
+      • drop stray horizontal rules so the only `---` in the block is the
+        trailing separator the str_replace pattern keys off.
+    """
+    def fix(line: str) -> str:
+        if line.strip() in ("---", "***", "___"):
+            return ""
+        return ("###" + line[2:]) if line.startswith("## ") else line
+
+    return "\n".join(fix(line) for line in summary.split("\n"))
+
+
+def build_section(target_date: date, summary: str) -> tuple[str, str]:
+    """Return (date_heading, section_md). The date heading is the block's only
+    `##`; the block ends with a single trailing `---` separator."""
+    summary = normalize_summary(summary)
+    weekday = WEEKDAY_CN[target_date.weekday()]
+    date_heading = f"## {target_date.strftime('%Y年%m月%d日')}（周{weekday}）"
+    section_md = f"{date_heading}\n\n{summary}\n\n---\n\n"
+    return date_heading, section_md
 
 
 def collect_data(
@@ -830,7 +964,7 @@ def collect_data(
 
     log("采集 Claude 对话...")
     claude_sessions = get_claude_sessions(target_date)
-    log(f"  -> {len(claude_sessions)} 条")
+    log(f"  -> {len(claude_sessions)} 个 session")
 
     log("采集飞书日历...")
     calendar_events = get_feishu_calendar(lark, target_date, str(config["timezone_offset"]))
@@ -1000,9 +1134,7 @@ def main() -> int:
             data["chrome"],
         )
 
-    weekday = WEEKDAY_CN[target_date.weekday()]
-    heading_title = f"{target_date.strftime('%Y年%m月%d日')}（周{weekday}）"
-    section_md = f"## {heading_title}\n\n{summary}\n\n---\n\n"
+    date_heading, section_md = build_section(target_date, summary)
 
     if args.dry_run:
         print("\n" + section_md)
@@ -1016,10 +1148,7 @@ def main() -> int:
     doc_token, _doc_title, _created = get_or_create_weekly_doc(lark, folder_token, week_num, monday, sunday)
 
     log("写入飞书文档...")
-    update_doc_section(lark, doc_token, f"## {heading_title}", section_md)
-
-    log("写入改动记录...")
-    append_change_record(lark, doc_token, user.get("name") or "未知用户", f"生成/更新 {heading_title} 日报")
+    update_doc_section(lark, doc_token, date_heading, section_md)
 
     first_line = next((line for line in summary.splitlines() if line.strip() and not line.startswith("#")), "已生成")
     if config.get("send_notification", True):
