@@ -102,10 +102,13 @@ Writing the daily section uses the **v2** `docs +update` API only:
 
 This stays atomic only because the date heading is the block's **only** `##`.
 The script normalizes the model output before writing: any stray `##` is demoted
-to `###`, and stray horizontal rules (`---`/`***`/`___`) are dropped so the only
-`---` in the block is the trailing separator the pattern keys off. The four body
+to `###`, stray horizontal rules (`---`/`***`/`___`) are dropped so the only
+`---` in the block is the trailing separator the pattern keys off, and any
+model-emitted title/date heading (e.g. a duplicate `YYYY年MM月DD日 日报` line) is
+removed since the script already supplies the date heading. The four body
 sections (今日工作总结 / 主要项目进展 / AI 会话明细 / 沟通&会议) are therefore
-always `###`.
+always `###`. The weekly document also carries no redundant body `# 第N周 …`
+heading — the docx page title alone holds the week title.
 
 ## Data Sources
 
@@ -113,7 +116,7 @@ The script reads local and Feishu data for the target date:
 
 - `~/.codex/state_5.sqlite` for Codex sessions (interactive kept individually, automations folded by ID)
 - `~/.claude/history.jsonl` for Claude Code sessions (grouped by `sessionId`, full prompt arc kept)
-- Feishu message search and calendar agenda (with video-conference flag) through `lark-cli`
+- Feishu message search and calendar agenda (with video-conference flag) through `lark-cli`. Message **transcripts** (grouped by chat, with sender and time) are passed to the model so the report distills the actual substance of the day's communication — decisions, asks, conclusions — rather than reporting a bare "N chats / M messages" count.
 - Feishu minutes (妙记) via `minutes +search` as **both owner and participant** (deduped by token); titles read from the `display_info` field
 - Chrome history from `~/Library/Application Support/Google/Chrome/{chrome_profile}/History`
 

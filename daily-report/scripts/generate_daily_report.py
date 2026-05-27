@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -267,6 +268,8 @@ def get_or_create_weekly_doc(
             return str(item["token"]), title, False
 
     log(f"  创建本周文档: {title}")
+    # The docx page title already shows `title`; do NOT also write it as a body
+    # H1 (that produced a redundant "第N周 …" heading right under the page title).
     created = lark.call(
         [
             "docs",
@@ -280,7 +283,7 @@ def get_or_create_weekly_doc(
             "--doc-format",
             "markdown",
             "--content",
-            f"# {title}\n\n",
+            "\n",
         ],
         timeout=60,
     )
@@ -666,6 +669,38 @@ def get_chrome_history(target_date: date, profile: str, skip_domains: set[str]) 
 
 # ── prompt building ────────────────────────────────────────────────────────────
 
+def chat_label(messages: list[dict[str, Any]], self_name: str) -> str:
+    """Human-readable label for a chat from its messages. p2p -> 与<对方>的私聊;
+    group -> 群聊（参与者…）. Lets the AI know who a conversation is with."""
+    ctype = messages[0].get("chat_type")
+    names: list[str] = []
+    for message in messages:
+        name = message.get("sender", {}).get("name")
+        if name and name not in names:
+            names.append(name)
+    others = [name for name in names if name != self_name]
+    if ctype == "p2p":
+        return f"与 {others[0]} 的私聊" if others else "私聊"
+    shown = "、".join(names[:6]) + ("…" if len(names) > 6 else "")
+    return f"群聊（{shown}）" if shown else "群聊"
+
+
+def message_text(message: dict[str, Any]) -> str:
+    """Plain-text rendering of one message for the AI. text/post keep their
+    content; non-text types become a short marker so the arc stays readable."""
+    msg_type = message.get("msg_type")
+    content = (message.get("content") or "").strip()
+    if msg_type in ("text", "post"):
+        return content
+    labels = {
+        "image": "[图片]", "file": "[文件]", "video_chat": "[视频会议]",
+        "todo": "[待办]", "audio": "[语音]", "media": "[视频]",
+        "sticker": "[表情]", "share_chat": "[分享群名片]", "share_user": "[分享名片]",
+    }
+    base = labels.get(msg_type, f"[{msg_type}]")
+    return f"{base} {content}" if (content and msg_type == "todo") else base
+
+
 def build_prompt(
     target_date: date,
     codex_sessions: list[dict[str, str]],
@@ -674,6 +709,7 @@ def build_prompt(
     calendar_events: list[dict[str, Any]],
     minutes_items: list[dict[str, Any]],
     chrome: dict[str, dict[str, Any]],
+    self_name: str = "",
 ) -> str:
     date_str = target_date.strftime("%Y年%m月%d日")
     lines = [f"以下是 {date_str} 的原始工作记录，请整理成日报。\n"]
@@ -744,12 +780,26 @@ def build_prompt(
                 lines.append(f"  {desc[:200]}")
         lines.append("")
 
+    # Feishu messages — feed the actual transcript so the AI can distill the
+    # substance (decisions / asks / conclusions), not just report a count.
     if messages:
-        chat_counts: dict[str, int] = defaultdict(int)
+        by_chat: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for message in messages:
-            chat_counts[str(message.get("chat_id", ""))] += 1
-        lines.append("## 飞书沟通")
-        lines.append(f"参与了 {len(chat_counts)} 个会话，共 {len(messages)} 条消息。")
+            by_chat[str(message.get("chat_id", ""))].append(message)
+        lines.append(
+            f"## 飞书沟通（{len(by_chat)} 个会话 / {len(messages)} 条消息；下面是聊天记录，请提炼有价值的内容，不要只报数量）"
+        )
+        for _cid, chat_messages in sorted(by_chat.items(), key=lambda item: -len(item[1])):
+            chat_messages = sorted(chat_messages, key=lambda m: m.get("create_time", ""))
+            lines.append(f"### {chat_label(chat_messages, self_name)}（{len(chat_messages)} 条）")
+            shown = chat_messages[:25]
+            for message in shown:
+                clock = (message.get("create_time", "") or "")[11:16]
+                name = message.get("sender", {}).get("name", "?")
+                text = message_text(message).replace("\n", " ")[:200]
+                lines.append(f"  {clock} {name}：{text}")
+            if len(chat_messages) > len(shown):
+                lines.append(f"  …（另有 {len(chat_messages) - len(shown)} 条）")
         lines.append("")
 
     work_domains = [(domain, value) for domain, value in list(chrome.items())[:15] if not domain.startswith("_")]
@@ -783,9 +833,12 @@ def build_prompt(
 
 ### 沟通 & 会议
 - 逐条列出今日飞书会议（时间 + 主题，标注是否视频会议）；有会议纪要则概述要点。
-- 末尾一句话概述飞书沟通量（多少会话 / 多少消息）。
+- 飞书沟通要**提炼实质内容**：从上面各会话的聊天记录里，归纳今天对齐/讨论/决定/安排/求助了什么，按人或按话题组织（例如「与某某：对齐了 XX 文档方向，确认要做 YY」）。聚焦工作相关的决策、结论、待办、问题与求助，忽略寒暄和无信息量的闲聊。
+- **禁止**只写"参与了 N 个会话 / M 条消息"这类纯数字——那没有意义。没有实质内容的会话可以不写。
 
-注意：略去环境配置、授权等背景噪音，但「有实质工作的 session 必须逐个出现」优先级最高。"""
+注意：略去环境配置、授权等背景噪音，但「有实质工作的 session 必须逐个出现」优先级最高。
+
+最后，**不要在开头输出任何标题行**（不要写「YYYY年MM月DD日 日报」「今日日报」「第N周」之类的标题，外层文档已经有日期标题了）。直接从 `### 今日工作总结` 开始。"""
     )
     return "\n".join(lines)
 
@@ -929,18 +982,28 @@ def fallback_format(
     return "\n".join(lines).strip()
 
 
+_DATE_RE = re.compile(r"\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日")
+
+
 def normalize_summary(summary: str) -> str:
-    """Keep the day block atomic for re-runs:
+    """Keep the day block atomic for re-runs and free of redundant headings:
+      • drop any AI-emitted title/date heading (the script already adds the
+        `## YYYY年MM月DD日（周X）` date heading; a second one is the redundant
+        "YYYY年MM月DD日 日报" line)
       • demote any stray h2 -> h3 (the date heading is the block's only `##`)
       • drop stray horizontal rules so the only `---` in the block is the
         trailing separator the str_replace pattern keys off.
     """
     def fix(line: str) -> str:
-        if line.strip() in ("---", "***", "___"):
+        stripped = line.strip()
+        if stripped in ("---", "***", "___"):
+            return ""
+        if stripped.startswith("#") and ("日报" in stripped or _DATE_RE.search(stripped)):
             return ""
         return ("###" + line[2:]) if line.startswith("## ") else line
 
-    return "\n".join(fix(line) for line in summary.split("\n"))
+    normalized = "\n".join(fix(line) for line in summary.split("\n"))
+    return re.sub(r"\n{3,}", "\n\n", normalized).strip()
 
 
 def build_section(target_date: date, summary: str) -> tuple[str, str]:
@@ -1123,7 +1186,7 @@ def main() -> int:
     log(f"第 {week_num} 周  {monday} ~ {sunday}")
 
     data = collect_data(lark, target_date, config)
-    prompt = build_prompt(target_date, **data)
+    prompt = build_prompt(target_date, self_name=str(user.get("name") or ""), **data)
     summary = summarize_with_ai(codex_cli, claude_cli, prompt, bool(config.get("ai_enabled", True)))
     if not summary:
         summary = fallback_format(
