@@ -198,6 +198,42 @@ python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py
 用 daily-report 生成 2026-04-28 的日报
 ```
 
+## 如果你用的是 Claude Code（不是 Codex）
+
+这个 skill 同样能装进 Claude Code，步骤几乎一样，只有两处不同。
+
+### 不同点 1: 安装目录换成 Claude Code 的 skills 目录
+
+方法 A（终端）:
+
+```bash
+mkdir -p ~/.claude/skills
+cp -R ~/Downloads/daily-report ~/.claude/skills/
+```
+
+方法 B（Finder）: 按 `Command + Shift + G` 进入 `~/.claude/skills`，把 `daily-report` 文件夹拖进去（目录不存在就先新建）。
+
+装完重启 Claude Code。
+
+### 不同点 2: 在 Claude Code 里这样用
+
+- 直接说: `用 daily-report 生成今天的日报`
+- 或输入斜杠命令: `/daily-report`
+- 预览不写飞书: `用 daily-report 预览今天日报，不要写飞书`
+- 指定日期: `用 daily-report 生成 2026-04-28 的日报`
+
+### 其余完全一样
+
+第 2 步装 lark-cli、第 3 步登录授权、第 4 步 `--install-check`、第 5/6 步预览与生成都不变，只要把命令里的 `~/.codex/skills` 换成 `~/.claude/skills`，例如:
+
+```bash
+python3 ~/.claude/skills/daily-report/scripts/generate_daily_report.py --install-check
+python3 ~/.claude/skills/daily-report/scripts/generate_daily_report.py --dry-run
+python3 ~/.claude/skills/daily-report/scripts/generate_daily_report.py
+```
+
+关于 AI 总结: 脚本默认先用 Codex，Codex 不可用时自动改用 Claude Code CLI。如果你只装了 Claude Code、没装 Codex，脚本会自动走 Claude，不需要额外设置——只要确保终端里 `claude --version` 能正常显示版本即可。
+
 ## 可选配置
 
 第一次可以创建配置文件:

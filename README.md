@@ -1,6 +1,6 @@
 # Daily Report Skill
 
-Codex skill for generating Feishu/Lark daily work reports from local activity sources.
+Codex / Claude Code skill for generating Feishu/Lark daily work reports from local activity sources.
 
 ## Start Here
 
@@ -23,16 +23,18 @@ For non-technical installation steps, open one of these files:
 
 ## Skill Folder
 
-The actual Codex skill is in:
+The actual skill is in:
 
 ```text
 daily-report/
 ```
 
-Install it by copying `daily-report/` into:
+Install it by copying `daily-report/` into your agent's skills directory, then restart the agent:
 
-```text
-~/.codex/skills/
-```
+- **Codex**: `~/.codex/skills/`
+- **Claude Code**: `~/.claude/skills/`
 
-Then restart Codex.
+The `SKILL.md` manifest works for both. Once installed, ask the agent
+"用 daily-report 生成今天的日报" (Claude Code also accepts `/daily-report`).
+See `INSTALLATION_CN.md` for the full step-by-step guide, including a dedicated
+Claude Code section.
