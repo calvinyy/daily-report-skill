@@ -19,6 +19,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -115,9 +116,39 @@ def command_preview(command: list[str]) -> str:
     return " ".join(Path(part).name if idx == 0 else part for idx, part in enumerate(command[:4]))
 
 
+# Feishu is directly reachable (domestic); if a configured local proxy (e.g. a
+# launchd-injected HTTP(S)_PROXY) is down, it must NOT take every lark-cli call
+# down with it (2026-06-03 outage: dead proxy → 0 messages collected, doc write
+# and notify all failed). lark-cli never needs the proxy — always strip it.
+_NO_PROXY_ENV = {
+    key: value
+    for key, value in os.environ.items()
+    if key.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")
+}
+
+
+def _ai_env() -> dict[str, str] | None:
+    """Env for AI CLI calls (codex / claude). A configured proxy is only useful
+    while it is actually listening; if it is dead, inheriting it makes the call
+    hang to timeout. Probe the port: alive → inherit env as-is; dead → strip
+    proxy vars and go direct."""
+    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+    if not proxy:
+        return None  # no proxy configured; inherit as-is
+    try:
+        parsed = urlparse(proxy if "://" in proxy else f"http://{proxy}")
+        with socket.create_connection((parsed.hostname, parsed.port or 80), timeout=2):
+            return None  # proxy alive; inherit as-is
+    except Exception:
+        log(f"  代理 {proxy} 不可达，AI CLI 改为直连")
+        return _NO_PROXY_ENV
+
+
 def run_json(command: list[str], timeout: int = 45) -> dict[str, Any]:
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=timeout, env=_NO_PROXY_ENV
+        )
     except Exception as exc:
         return {"ok": False, "_error": str(exc), "_command": command}
 
@@ -358,7 +389,9 @@ def update_doc_section(lark: LarkClient, doc_token: str, heading: str, section_m
     if appended.get("ok"):
         log("  已追加新区段 (v2 append)")
     else:
-        log(f"  ⚠️ 写入失败: {appended.get('_error') or appended}")
+        # Fail fast with a non-zero exit so any scheduler/guard does NOT mark
+        # the day done — re-runs are idempotent (str_replace by date heading).
+        raise SystemExit(f"写入飞书文档失败: {appended.get('_error') or appended}")
 
 
 def send_notification(
@@ -390,6 +423,10 @@ def send_notification(
     )
     ok = result.get("ok") or result.get("message_id") or result.get("data", {}).get("message_id")
     log(f"  通知发送: {'成功' if ok else '失败'}")
+    if not ok:
+        # The DM push is the part the user actually relies on — treat a failed
+        # send as a failed run so the scheduler retries instead of marking done.
+        raise SystemExit(f"飞书通知发送失败: {result.get('_error') or result}")
 
 
 # ── data collectors ───────────────────────────────────────────────────────────
@@ -866,7 +903,8 @@ def summarize_with_codex(codex_cli: str, prompt: str) -> tuple[str, str]:
             capture_output=True,
             text=True,
             cwd=str(APP_DIR),
-            timeout=180,
+            timeout=600,
+            env=_ai_env(),
         )
         summary = Path(output_path).read_text(encoding="utf-8", errors="replace").strip()
         if result.returncode == 0 and summary:
@@ -894,7 +932,8 @@ def summarize_with_claude(claude_cli: str, prompt: str) -> tuple[str, str]:
             [claude_cli, "-p", prompt, "--output-format", "text"],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=600,
+            env=_ai_env(),
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip(), ""
