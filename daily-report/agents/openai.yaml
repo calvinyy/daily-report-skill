@@ -1,4 +1,4 @@
 interface:
   display_name: "Daily Report"
-  short_description: "Generate Feishu daily work reports"
-  default_prompt: "Use $daily-report to generate today's Feishu daily report."
+  short_description: "Generate Feishu daily and weekly work reports"
+  default_prompt: "Use $daily-report to generate today's Feishu daily report or this week's weekly report."

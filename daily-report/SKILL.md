@@ -7,59 +7,82 @@ description: Generate, preview, troubleshoot, or set up Feishu/Lark daily work r
 
 ## Overview
 
-Use this skill to generate a daily work report, write it into a weekly Feishu/Lark document, and optionally notify the user. The bundled script collects local Codex sessions, Claude Code history, Feishu messages/calendar/minutes, and Chrome history, then summarizes the work with Codex first and Claude Code as a fallback.
+Use this skill to generate Chinese daily or weekly work reports, write them into Feishu/Lark folders, and optionally notify the user. The bundled script collects local Codex sessions, Claude Code history, Feishu messages/calendar/minutes, browser activity, and related local sources, then summarizes the work with local Codex CLI first, Claude Code CLI second, and template formatting as the final fallback.
+
+## Date Range Defaults
+
+When the user asks to update daily reports for a relative range, such as "过去7天", "过去一周", or "最近几天", exclude the current date by default. Treat the daily-report range as the most recent fully completed days, ending yesterday, unless the user explicitly asks to include today, today's report, or the current date.
+
+This completed-day default only changes which daily dates are generated. Weekly reports still use the existing natural ISO week window from Monday through Sunday; do not reinterpret weekly reports as a rolling seven-day window.
+
+Examples:
+
+- If today is 2026-06-11, "更新过去7天的日报" means 2026-06-04 through 2026-06-10.
+- If today is 2026-06-11, "更新过去7天的周报和日报" updates daily reports for 2026-06-04 through 2026-06-10, then updates the natural Monday-Sunday weekly reports touched by that completed-day range.
+- If the user says "包括今天", "今天也更新", or asks for today's daily report, include the current date.
 
 ## Quick Workflow
 
-1. Locate this skill directory and use `scripts/generate_daily_report.py`.
-2. Check installation before editing Feishu:
+1. Check installation:
    ```bash
-   python3 /path/to/daily-report/scripts/generate_daily_report.py --install-check
+   python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --install-check
    ```
-3. Preview today's report without writing to Feishu:
+2. Preview today's daily report:
    ```bash
-   python3 /path/to/daily-report/scripts/generate_daily_report.py --dry-run
+   python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --kind daily --dry-run
    ```
-4. Generate and write today's report:
+3. Preview this week's weekly report:
    ```bash
-   python3 /path/to/daily-report/scripts/generate_daily_report.py
+   python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --kind weekly --dry-run
    ```
-5. Generate a specific date:
+4. Generate and write today's daily report:
    ```bash
-   python3 /path/to/daily-report/scripts/generate_daily_report.py 2026-04-28
+   python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --kind daily
+   ```
+5. Generate and write this week's weekly report:
+   ```bash
+   python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --kind weekly
    ```
 
 After a successful write, always return the Feishu document link shown in the script log.
+
+## Install For Another User
+
+From a cloned or copied skill folder, run:
+
+```bash
+bash scripts/install.sh
+```
+
+The installer copies this skill to `~/.codex/skills/daily-report`, creates `~/.daily-report-skill/config.json` if missing, and runs the install check. After that, the user should complete the Feishu authorization below if `lark-cli` is not already authenticated.
 
 ## Configuration
 
 Create a user config when first setting up:
 
 ```bash
-python3 /path/to/daily-report/scripts/generate_daily_report.py --init-config
+python3 ~/.codex/skills/daily-report/scripts/generate_daily_report.py --init-config
 ```
 
 The config is written to `~/.daily-report-skill/config.json`. Important fields:
 
-- `folder_name`: Feishu Drive folder for weekly docs. Default: `周报记录`.
+- `daily_folder_name`: Feishu Drive folder for daily reports. Default: `日报记录`.
+- `weekly_folder_name`: Feishu Drive folder for weekly reports. Default: `周报记录`.
+- `enabled_sources`: source collectors to use, such as `codex`, `claude`, `accio`, `feishu`, `browser`, `computer`, and `git`.
+- `accio_paths`: Accio JSONL export paths to collect.
 - `notify_user_id`: Feishu `open_id` to notify. If blank, the script uses the current authorized user when available.
 - `notify_as`: `user` or `bot`. Prefer `user` for individual installs.
 - `send_notification`: set `false` to write docs without sending a message.
 - `lark_cli`: optional explicit path to `lark-cli`.
-- `codex_cli`: optional explicit path to the Codex CLI. Preferred summarizer.
-- `claude_cli`: optional explicit path to the Claude Code CLI. Fallback summarizer.
-- `ai_cli`: deprecated alias for `claude_cli`.
-- `ai_enabled`: set `false` to skip Codex/Claude summarization and use fallback formatting.
-- `chrome_profile`: Chrome profile folder, usually `Default` or `Profile 1`.
+- `codex_cli`: optional explicit path to `codex`.
+- `codex_model`: model passed to `codex exec`; default is `gpt-5.4-mini`. Set to empty string to use Codex default config.
+- `claude_cli`: optional explicit path to Claude Code CLI fallback.
+- `ai_cli`: legacy alias for `claude_cli`.
+- `ai_enabled`: set `false` to skip AI summarization and use fallback formatting.
+- `chrome_profiles`: Chrome profile folders, usually `Default` or `Profile 1`.
 - `skip_domains`: domains excluded from browser-history summaries.
 
-Command-line flags override config values for one run: `--folder-name`, `--notify-user-id`, `--lark-cli`, `--codex-cli`, `--claude-cli`, `--ai-cli`, `--no-ai`, `--no-notify`.
-
-Default summarization order:
-
-1. Use `codex exec --skip-git-repo-check --ephemeral` and read the final answer through `--output-last-message`.
-2. If Codex is missing, not logged in, times out, or returns no summary, fall back to `claude -p --output-format text`.
-3. If both are unavailable, exit with an explicit error and advise the user to install/open Codex, run `codex login status`, run `codex login` if needed, or temporarily use `--no-ai` for a basic raw-record report.
+Command-line flags override config values for one run: `--kind`, `--date`, `--folder-name`, `--source`, `--raw-bundle-path`, `--notify-user-id`, `--lark-cli`, `--codex-cli`, `--codex-model`, `--claude-cli`, `--ai-cli`, `--no-ai`, `--no-notify`. Use `--raw-bundle-path` to write the normalized source bundle JSON to the given path.
 
 ## Feishu Requirements
 
@@ -67,6 +90,7 @@ The script depends on `lark-cli` authenticated as the user. The login should inc
 
 ```bash
 lark-cli auth login --domain im,calendar,drive,docs,contact,minutes --no-wait --json
+lark-cli auth login --scope "search:docs:read task:task:read docs:document.comment:read" --no-wait --json
 ```
 
 If the user cannot authorize or the token expired, help them rerun login and then rerun `--install-check`.
@@ -75,58 +99,33 @@ If the user cannot authorize or the token expired, help them rerun login and the
 
 The script creates or reuses:
 
-- Feishu Drive folder: `folder_name`
-- Weekly document title: `第{ISO周数}周 MM/DD-MM/DD`
-- Daily section title: `## YYYY年MM月DD日（周X）`
+- Daily Feishu Drive folder: `daily_folder_name`
+- Weekly Feishu Drive folder: `weekly_folder_name`
+- Daily document title: `YYYY年第WW周日报 MM/DD`
+- Daily section heading: `YYYY年MM月DD日（周X）`
+- Weekly document title: `YYYY年第WW周周报 MM/DD-MM/DD`
+- Weekly section heading: `YYYY年第WW周工作周报`
 
-### Faithful per-session recording
+For each successful document write, the script replaces the matching day or week section so reruns update the same report.
 
-Every Claude Code session and every Codex session for the day is enumerated
-individually in the report — never collapsed into a single vague line. The
-prompt keeps each Claude session's full instruction arc (opener + follow-ups)
-and asks the model to judge the real goal/output from the whole arc. Recurring
-hourly Codex automations (titles starting `Automation:`) are the one exception:
-they are folded by automation ID into one entry with a run count, time span, and
-latest progress, so background loops don't drown out genuine interactive work.
+## Expanded Report Sources
 
-### Idempotent re-runs (v2 docs API)
+The workflow collects and normalizes local and Feishu data for the target date or week:
 
-Writing the daily section uses the **v2** `docs +update` API only:
+- Codex sessions, rollout summaries, tool traces, and local git commits.
+- Claude history from `~/.claude/history.jsonl`.
+- Accio records from configured `accio_paths`; missing paths are included as `需确认`.
+- Feishu messages, calendar events, minutes, recently edited/commented docs, and related tasks through `lark-cli`.
+- Chrome history from configured `chrome_profiles`.
+- Browser Use and Computer Use tool traces found inside Codex rollout files.
 
-- **First write of the day** → `--command append --doc-format markdown`.
-- **Re-run for the same day** → `--command str_replace --doc-format markdown`
-  with the `前缀...后缀` ellipsis pattern `## <日期>（周X）...---`, replacing the
-  whole day block in place. str_replace returns no `updated_blocks_count`, so
-  success is detected via `data.result == "success"`; a missing pattern returns
-  `result: "failed"` and the code falls back to `append`.
-
-This stays atomic only because the date heading is the block's **only** `##`.
-The script normalizes the model output before writing: any stray `##` is demoted
-to `###`, stray horizontal rules (`---`/`***`/`___`) are dropped so the only
-`---` in the block is the trailing separator the pattern keys off, and any
-model-emitted title/date heading (e.g. a duplicate `YYYY年MM月DD日 日报` line) is
-removed since the script already supplies the date heading. The four body
-sections (今日工作总结 / 主要项目进展 / AI 会话明细 / 沟通&会议) are therefore
-always `###`. The weekly document also carries no redundant body `# 第N周 …`
-heading — the docx page title alone holds the week title.
-
-## Data Sources
-
-The script reads local and Feishu data for the target date:
-
-- `~/.codex/state_5.sqlite` for Codex sessions (interactive kept individually, automations folded by ID)
-- `~/.claude/history.jsonl` for Claude Code sessions (grouped by `sessionId`, full prompt arc kept)
-- Feishu message search and calendar agenda (with video-conference flag) through `lark-cli`. Message **transcripts** (grouped by chat, with sender and time) are passed to the model so the report distills the actual substance of the day's communication — decisions, asks, conclusions — rather than reporting a bare "N chats / M messages" count.
-- Feishu minutes (妙记) via `minutes +search` as **both owner and participant** (deduped by token); titles read from the `display_info` field
-- Chrome history from `~/Library/Application Support/Google/Chrome/{chrome_profile}/History`
-
-Chrome history is copied to a temporary SQLite file before reading so it can work while Chrome is open.
+Chrome history is copied to a temporary SQLite file before reading so it can work while Chrome is open. Required Feishu authorization is listed under Feishu Requirements. Daily reports emphasize execution progress. Weekly reports emphasize project outcomes, review of issues, risks, and next-week plans.
 
 ## Troubleshooting
 
 - Missing `lark-cli`: ask the user to install `@larksuite/cli`, then run `lark-cli --version`.
 - Invalid Feishu token: run `lark-cli auth status`, then rerun `lark-cli auth login ...`.
-- No AI summary: prioritize installing/opening Codex and running `codex login status`; Claude Code CLI is only the fallback. Use `--no-ai` only when a basic raw-record report is acceptable.
-- Empty Chrome history: check `chrome_profile` in config.
-- Duplicate daily sections on re-run: caused by inner `##` headings (the str_replace `## …（周X）...---` pattern is bounded by the first `##`/`---`). The script demotes `##`→`###` and strips stray `---` automatically; if you hand-edit the doc, keep the date heading as the block's only `##` and one trailing `---`.
+- No AI summary: install or configure `codex` and/or Claude Code CLI, or run with `--no-ai`.
+- Empty Chrome history: check `chrome_profiles` in config.
+- Duplicate report sections: rerun after confirming the existing section heading matches the daily or weekly section heading.
 - Permission errors on Feishu docs: rerun auth with all required domains and use `--install-check`.
