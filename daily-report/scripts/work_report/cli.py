@@ -41,6 +41,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--codex-cli", help="Path to codex CLI.")
     parser.add_argument("--codex-model", help="Codex model for summarization. Empty config uses Codex default.")
     parser.add_argument("--claude-cli", help="Path to Claude CLI fallback.")
+    parser.add_argument("--claude-model", help="Claude model for summarization fallback. Empty config uses Claude default.")
     parser.add_argument("--ai-cli", help="Legacy alias for --claude-cli.")
     return parser
 

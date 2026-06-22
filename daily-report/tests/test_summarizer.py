@@ -3,7 +3,12 @@ from datetime import date, datetime
 
 from work_report.models import ActivityBundle, ReportKind, SourceRecord, build_date_window
 from work_report.prompts import build_summary_prompt
-from work_report.summarizer import fallback_render, short_cli_error, summarize
+from work_report.summarizer import (
+    fallback_render,
+    short_cli_error,
+    summarize,
+    summarize_with_claude,
+)
 
 
 DAILY_HEADINGS = [
@@ -223,6 +228,30 @@ def test_summarize_accepts_ai_output_with_required_report_sections():
     )
 
     assert rendered == ai_summary
+
+
+def test_summarize_with_claude_pins_model_when_configured():
+    captured = {}
+
+    def fake_runner(command, capture_output, text, timeout, check=False):
+        captured["command"] = command
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    summarize_with_claude("提示词", claude_cli="/bin/claude", model="claude-sonnet-4-6", runner=fake_runner)
+
+    assert captured["command"] == ["/bin/claude", "-p", "提示词", "--model", "claude-sonnet-4-6"]
+
+
+def test_summarize_with_claude_omits_model_flag_when_blank():
+    captured = {}
+
+    def fake_runner(command, capture_output, text, timeout, check=False):
+        captured["command"] = command
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    summarize_with_claude("提示词", claude_cli="/bin/claude", runner=fake_runner)
+
+    assert "--model" not in captured["command"]
 
 
 def test_short_cli_error_sanitizes_timeout_command():

@@ -42,6 +42,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "codex_cli": "",
     "codex_model": "gpt-5.4-mini",
     "claude_cli": "",
+    # Pin the Claude fallback model. `claude -p` with no --model uses the global
+    # default in ~/.claude/settings.json, which can be an unavailable model
+    # (e.g. claude-fable-5 went "currently unavailable") — every call then exits
+    # 1 and the report silently degrades to the non-AI fallback. Keep this on an
+    # always-available, capable model. Empty string = use Claude's own default.
+    "claude_model": "claude-sonnet-4-6",
     "ai_cli": "",
     "ai_enabled": True,
     "timezone_offset": "+08:00",
@@ -105,6 +111,8 @@ def merge_cli_overrides(config: dict[str, Any], args: Namespace) -> dict[str, An
         merged["codex_model"] = args.codex_model
     if args.claude_cli:
         merged["claude_cli"] = args.claude_cli
+    if args.claude_model is not None:
+        merged["claude_model"] = args.claude_model
     if args.ai_cli:
         merged["ai_cli"] = args.ai_cli
         merged["claude_cli"] = args.ai_cli

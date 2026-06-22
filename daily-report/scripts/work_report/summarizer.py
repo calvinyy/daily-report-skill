@@ -53,13 +53,17 @@ def summarize_with_codex(
 def summarize_with_claude(
     prompt: str,
     claude_cli: str,
+    model: str = "",
     timeout: int = 180,
     runner: Runner = subprocess.run,
 ) -> str:
     if not claude_cli:
         return ""
+    command = [claude_cli, "-p", prompt]
+    if model:
+        command.extend(["--model", model])
     completed = runner(
-        [claude_cli, "-p", prompt],
+        command,
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -135,7 +139,12 @@ def summarize(
         claude_cli = binaries.get("claude") or str(config.get("claude_cli") or config.get("ai_cli") or "")
         if claude_cli:
             try:
-                summary = summarize_with_claude(prompt, claude_cli=claude_cli, runner=runner)
+                summary = summarize_with_claude(
+                    prompt,
+                    claude_cli=claude_cli,
+                    model=str(config.get("claude_model") or ""),
+                    runner=runner,
+                )
                 if summary and _has_required_report_shape(summary, window):
                     return summary
                 if summary:
