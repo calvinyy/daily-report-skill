@@ -55,6 +55,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "ai_cli": "",
     "ai_enabled": True,
     "timezone_offset": "+08:00",
+    # Where the guard writes daily_YYYY-MM-DD.done flags; --watchdog reads them to
+    # detect overdue-missing reports and stores its alert throttle state here.
+    "flag_dir": "~/.report_flags",
     "chrome_profile": "Default",
     "skip_domains": sorted(DEFAULT_SKIP_DOMAINS),
     "max_prompt_records": 180,

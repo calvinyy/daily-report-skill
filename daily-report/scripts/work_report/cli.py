@@ -25,6 +25,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Config JSON path.")
     parser.add_argument("--init-config", action="store_true", help="Create a default config file and exit.")
     parser.add_argument("--install-check", action="store_true", help="Check dependencies and Feishu auth.")
+    parser.add_argument(
+        "--watchdog",
+        action="store_true",
+        help="Run lightweight health checks (token expiry + missed-report alerts) and exit.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Collect data and print markdown without writing Feishu.")
     parser.add_argument("--no-ai", action="store_true", help="Do not call an AI CLI; use fallback formatting.")
     parser.add_argument("--no-notify", action="store_true", help="Do not send Feishu notification.")
@@ -80,6 +85,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.install_check:
         return run_install_check(config, lark_cli, codex_cli, claude_cli)
+
+    if args.watchdog:
+        from work_report.watchdog import run_watchdog
+
+        return run_watchdog(config, binaries={"lark": lark_cli})
 
     target_date = parse_target_date(args.date_value or args.positional_date)
     return run_workflow(
