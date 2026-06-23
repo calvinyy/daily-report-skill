@@ -176,6 +176,7 @@ def test_send_notification_returns_false_on_delivery_failure():
 
 def test_run_workflow_fails_when_notification_fails(monkeypatch):
     lark = FailingNotifyLark()
+    monkeypatch.setattr(workflow, "log", lambda *_a, **_k: None)  # don't pollute the real report.log
     monkeypatch.setattr(workflow, "LarkClient", lambda binary: lark)
     monkeypatch.setattr(workflow, "collect_activity", lambda window, config, client: sample_bundle())
     monkeypatch.setattr(workflow, "summarize", lambda *args, **kwargs: "## 今日工作总结\n- 完成")

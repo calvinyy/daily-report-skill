@@ -56,8 +56,11 @@ class LarkClient:
 
     def current_user(self) -> dict[str, str]:
         status = self.auth_status()
-        user_name = str(status.get("userName") or "")
-        user_open_id = str(status.get("userOpenId") or "")
+        # Current lark-cli nests identity under identities.user.{userName,openId};
+        # older/flat shapes use top-level userName/userOpenId. Accept both.
+        identity = status.get("identities", {}).get("user", {}) if isinstance(status.get("identities"), dict) else {}
+        user_name = str(status.get("userName") or identity.get("userName") or "")
+        user_open_id = str(status.get("userOpenId") or identity.get("openId") or "")
         if user_name and user_open_id:
             return {"name": user_name, "open_id": user_open_id}
         data = self.call(["contact", "+get-user"], timeout=20)

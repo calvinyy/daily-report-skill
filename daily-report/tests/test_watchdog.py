@@ -81,6 +81,16 @@ def test_token_alert_when_expiring_within_three_days(tmp_path):
     assert "授权即将到期" in sends[0][sends[0].index("--markdown") + 1]
 
 
+def test_token_alert_reads_nested_identities_shape(tmp_path):
+    # Current lark-cli shape: token fields under identities.user.
+    soon = (datetime.now().astimezone() + timedelta(days=1)).isoformat()
+    lark = FakeLark(auth={"identities": {"user": {"refreshExpiresAt": soon}}})
+
+    check_token_health(lark, "ou_u", "user", state_path=tmp_path / "s.state", log=lambda _m: None)
+
+    assert len(lark.sends()) == 1
+
+
 def test_token_no_alert_when_far_off(tmp_path):
     far = (datetime.now().astimezone() + timedelta(days=30)).isoformat()
     lark = FakeLark(auth={"ok": True, "refreshExpiresAt": far})

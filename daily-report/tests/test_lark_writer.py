@@ -93,6 +93,31 @@ def test_run_json_wraps_non_dict_json_stdout(monkeypatch):
     }
 
 
+class _StubLark(lark_client.LarkClient):
+    def __init__(self, status):
+        self._status = status
+        self._auth_status = None
+        self.extra_calls = []
+
+    def call(self, args, timeout=45):
+        self.extra_calls.append(args)
+        if args[:2] == ["auth", "status"]:
+            return self._status
+        return {"ok": True, "data": {}}
+
+
+def test_current_user_reads_nested_identities_shape():
+    stub = _StubLark(
+        {"identities": {"user": {"userName": "于洋", "openId": "ou_915d78"}}}
+    )
+
+    user = stub.current_user()
+
+    assert user == {"name": "于洋", "open_id": "ou_915d78"}
+    # No fallback contact +get-user call was needed.
+    assert all(call[:2] != ["contact", "+get-user"] for call in stub.extra_calls)
+
+
 def test_failed_folder_list_raises_without_creating():
     lark = QueueLark([{"ok": False, "_error": "token expired"}])
 

@@ -78,7 +78,14 @@ def check_token_health(
     log: Callable[[str], None] = print,
 ) -> None:
     status = lark.call(["auth", "status"], timeout=15)
-    exp = status.get("refreshExpiresAt") or status.get("data", {}).get("refreshExpiresAt")
+    # Current lark-cli nests token fields under identities.user; older/flat shapes
+    # put them at the top level. Accept both.
+    user_identity = status.get("identities", {}).get("user", {}) if isinstance(status.get("identities"), dict) else {}
+    exp = (
+        status.get("refreshExpiresAt")
+        or user_identity.get("refreshExpiresAt")
+        or status.get("data", {}).get("refreshExpiresAt")
+    )
     if not exp:
         return
     try:

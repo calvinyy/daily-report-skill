@@ -99,3 +99,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         binaries={"lark": lark_cli, "codex": codex_cli, "claude": claude_cli},
         dry_run=args.dry_run,
     )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
