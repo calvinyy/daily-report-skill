@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 from work_report.models import ActivityBundle, DateWindow, ReportKind, SourceRecord
+from work_report.net_env import claude_env
 from work_report.prompts import DAILY_SECTIONS, WEEKLY_SECTIONS, build_summary_prompt
 
 
@@ -56,18 +57,21 @@ def summarize_with_claude(
     model: str = "",
     timeout: int = 180,
     runner: Runner = subprocess.run,
+    log: Callable[[str], None] | None = None,
 ) -> str:
     if not claude_cli:
         return ""
     command = [claude_cli, "-p", prompt]
     if model:
         command.extend(["--model", model])
+    # Probe the launchd proxy: alive -> inherit, dead -> direct (2026-06-03 outage).
     completed = runner(
         command,
         capture_output=True,
         text=True,
         timeout=timeout,
         check=False,
+        env=claude_env(log),
     )
     if completed.returncode != 0:
         raise RuntimeError(f"Claude CLI failed: {short_cli_error(completed)}")
@@ -112,6 +116,7 @@ def summarize(
     config: dict[str, Any] | None = None,
     binaries: dict[str, str] | None = None,
     runner: Runner = subprocess.run,
+    log: Callable[[str], None] | None = None,
 ) -> str:
     config = config or {}
     binaries = binaries or {}
@@ -144,6 +149,7 @@ def summarize(
                     claude_cli=claude_cli,
                     model=str(config.get("claude_model") or ""),
                     runner=runner,
+                    log=log,
                 )
                 if summary and _has_required_report_shape(summary, window):
                     return summary

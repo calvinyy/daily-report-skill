@@ -233,7 +233,7 @@ def test_summarize_accepts_ai_output_with_required_report_sections():
 def test_summarize_with_claude_pins_model_when_configured():
     captured = {}
 
-    def fake_runner(command, capture_output, text, timeout, check=False):
+    def fake_runner(command, capture_output, text, timeout, check=False, env=None):
         captured["command"] = command
         return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
 
@@ -245,7 +245,7 @@ def test_summarize_with_claude_pins_model_when_configured():
 def test_summarize_with_claude_omits_model_flag_when_blank():
     captured = {}
 
-    def fake_runner(command, capture_output, text, timeout, check=False):
+    def fake_runner(command, capture_output, text, timeout, check=False, env=None):
         captured["command"] = command
         return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
 

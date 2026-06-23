@@ -4,10 +4,15 @@ import json
 import subprocess
 from typing import Any
 
+from work_report.net_env import lark_env
 
-def run_json(command: list[str], timeout: int = 45) -> dict[str, Any]:
+
+def run_json(command: list[str], timeout: int = 45, env: dict[str, str] | None = None) -> dict[str, Any]:
+    # Feishu is domestic-direct: strip proxy vars so a dead launchd proxy can't
+    # take every lark-cli call down with it (2026-06-03 outage).
+    effective_env = lark_env() if env is None else env
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, env=effective_env)
     except Exception as exc:
         return {"ok": False, "_error": str(exc), "_command": command}
     raw = result.stdout.strip()

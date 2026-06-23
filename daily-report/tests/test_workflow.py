@@ -1,7 +1,9 @@
 from datetime import date, datetime
 
+from work_report import workflow
+from work_report.lark_writer import WriteResult
 from work_report.models import ActivityBundle, ReportKind, SourceRecord
-from work_report.workflow import dry_run_markdown, run_install_check, send_notification
+from work_report.workflow import dry_run_markdown, run_install_check, run_workflow, send_notification
 
 
 DAILY_HEADINGS = [
@@ -128,7 +130,7 @@ def test_send_notification_uses_markdown_message_command():
 def test_send_notification_skips_without_notify_user_id():
     lark = FakeLark()
 
-    send_notification(
+    sent = send_notification(
         lark=lark,
         doc_token="doc-token",
         target_date=date(2026, 5, 14),
@@ -138,3 +140,58 @@ def test_send_notification_skips_without_notify_user_id():
     )
 
     assert lark.calls == []
+    assert sent is True
+
+
+class FailingNotifyLark:
+    """OK for everything except the im +messages-send DM, which fails."""
+
+    def __init__(self):
+        self.calls = []
+
+    def call(self, args, timeout=45):
+        self.calls.append(args)
+        if args[:2] == ["im", "+messages-send"]:
+            return {"ok": False, "_error": "message send failed"}
+        return {"ok": True}
+
+    def current_user(self):
+        return {"name": "Riemann", "open_id": "ou_test"}
+
+
+def test_send_notification_returns_false_on_delivery_failure():
+    lark = FailingNotifyLark()
+
+    sent = send_notification(
+        lark=lark,
+        doc_token="doc-token",
+        target_date=date(2026, 5, 14),
+        summary="## 今日工作总结\n- x",
+        notify_user_id="ou_test",
+        notify_as="user",
+    )
+
+    assert sent is False
+
+
+def test_run_workflow_fails_when_notification_fails(monkeypatch):
+    lark = FailingNotifyLark()
+    monkeypatch.setattr(workflow, "LarkClient", lambda binary: lark)
+    monkeypatch.setattr(workflow, "collect_activity", lambda window, config, client: sample_bundle())
+    monkeypatch.setattr(workflow, "summarize", lambda *args, **kwargs: "## 今日工作总结\n- 完成")
+    monkeypatch.setattr(
+        workflow,
+        "write_report",
+        lambda *args, **kwargs: WriteResult(doc_token="doc", url="https://feishu.cn/docx/doc"),
+    )
+
+    code = run_workflow(
+        target_date=date(2026, 5, 14),
+        kind=ReportKind.DAILY,
+        config={"send_notification": True, "notify_user_id": "ou_test"},
+        binaries={"lark": "/bin/lark-cli"},
+        dry_run=False,
+    )
+
+    assert code == 1
+    assert any(call[:2] == ["im", "+messages-send"] for call in lark.calls)

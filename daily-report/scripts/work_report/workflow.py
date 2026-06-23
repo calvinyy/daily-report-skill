@@ -46,9 +46,13 @@ def send_notification(
     summary: str,
     notify_user_id: str,
     notify_as: str,
-) -> None:
+) -> bool:
+    """Returns True if the DM was sent (or there was nothing to send), False on a
+    delivery failure. Callers fail the run on False so the guard does NOT mark the
+    day done and retries — otherwise a successful doc write + failed notify is
+    silently lost (the 2026-06-03 failure mode the monolith's 06-04 fix killed)."""
     if not notify_user_id:
-        return
+        return True
     message = "\n".join(
         [
             f"工作报告已生成：{target_date.isoformat()}",
@@ -63,8 +67,9 @@ def send_notification(
     result = lark.call(args, timeout=30)
     if result.get("ok") is False:
         log(f"通知发送失败: {result.get('_error') or result}")
-    else:
-        log("通知发送成功")
+        return False
+    log("通知发送成功")
+    return True
 
 
 def run_install_check(config: dict[str, Any], lark_cli: str, codex_cli: str, claude_cli: str) -> int:
@@ -113,7 +118,7 @@ def run_workflow(
     bundle = collect_activity(window, config, lark)
     _write_raw_bundle(config.get("include_raw_bundle_path"), bundle)
 
-    summary = summarize(window, bundle, config=config, binaries=binaries)
+    summary = summarize(window, bundle, config=config, binaries=binaries, log=log)
     if dry_run:
         print(dry_run_markdown(target_date, kind, summary, bundle), end="")
         return 0
@@ -126,7 +131,7 @@ def run_workflow(
 
     if config.get("send_notification", True):
         notify_user_id = str(config.get("notify_user_id") or current_user.get("open_id") or "")
-        send_notification(
+        notified = send_notification(
             lark=lark,
             doc_token=result.doc_token,
             target_date=target_date,
@@ -134,6 +139,10 @@ def run_workflow(
             notify_user_id=notify_user_id,
             notify_as=str(config.get("notify_as") or "user"),
         )
+        if not notified:
+            # Doc is written but the user wasn't told — fail so the guard retries
+            # (re-run is idempotent: it overwrites the same day's doc).
+            return 1
     return 0
 
 

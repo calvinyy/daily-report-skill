@@ -57,7 +57,7 @@ def test_report_doc_url_uses_docx_host():
 
 
 def test_run_json_forces_error_shape_when_nonzero_exit_has_json_stdout(monkeypatch):
-    def fake_run(command, capture_output, text, timeout):
+    def fake_run(command, capture_output, text, timeout, env=None):
         assert command == ["lark-cli", "auth", "status"]
         assert capture_output is True
         assert text is True
@@ -76,7 +76,7 @@ def test_run_json_forces_error_shape_when_nonzero_exit_has_json_stdout(monkeypat
 
 
 def test_run_json_wraps_non_dict_json_stdout(monkeypatch):
-    def fake_run(command, capture_output, text, timeout):
+    def fake_run(command, capture_output, text, timeout, env=None):
         return SimpleNamespace(returncode=0, stdout='["ok-ish"]', stderr="")
 
     monkeypatch.setattr(lark_client.subprocess, "run", fake_run)
