@@ -29,6 +29,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "weekly_folder_name": "周报记录",
     "folder_name": "周报记录",
     "legacy_folder_name": "周报记录",
+    # Report layout. "per_day": one doc per day, overwritten each run (default).
+    # "weekly_sections": the monolith's model — one weekly doc per ISO week with
+    # a per-day "## YYYY年MM月DD日（周X）" section, str_replace-or-append in place.
+    "report_layout": "per_day",
     "enabled_sources": ["codex", "claude", "accio", "feishu", "browser", "computer", "git"],
     "accio_paths": [
         "~/.accio/history.jsonl",

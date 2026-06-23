@@ -12,6 +12,7 @@ from work_report.lark_writer import (
     get_or_create_folder,
     replace_or_append_section,
     report_doc_url,
+    weekly_doc_title,
     write_report,
 )
 from work_report.models import ReportKind, build_date_window
@@ -112,6 +113,9 @@ def test_failed_doc_list_raises_without_creating():
     assert lark.calls[0][:3] == ["drive", "files", "list"]
 
 
+SECTION_MD = "## 2026年05月14日（周四）\n\n### 今日工作总结\n- 完成登录方案梳理\n\n---\n\n"
+
+
 def test_replace_range_not_found_falls_back_to_append_and_succeeds():
     lark = QueueLark(
         [
@@ -120,33 +124,41 @@ def test_replace_range_not_found_falls_back_to_append_and_succeeds():
         ]
     )
 
-    replace_or_append_section(lark, "doc_1", "2026年05月14日（周四）", "## 2026年05月14日（周四）\n\n内容")
+    replace_or_append_section(lark, "doc_1", "2026年05月14日（周四）", SECTION_MD)
 
     assert len(lark.calls) == 2
-    assert "--mode" in lark.calls[0]
-    assert "replace_range" in lark.calls[0]
-    assert "--mode" in lark.calls[1]
-    assert "append" in lark.calls[1]
+    assert lark.calls[0][lark.calls[0].index("--command") + 1] == "str_replace"
+    assert "--pattern" in lark.calls[0]
+    assert lark.calls[0][lark.calls[0].index("--pattern") + 1] == "## 2026年05月14日（周四）...---"
+    assert lark.calls[1][lark.calls[1].index("--command") + 1] == "append"
 
 
-def test_replace_range_permission_failure_raises_without_append():
+def test_str_replace_success_does_not_append():
+    lark = QueueLark([{"ok": True, "data": {"result": "success"}}])
+
+    replace_or_append_section(lark, "doc_1", "2026年05月14日（周四）", SECTION_MD)
+
+    assert len(lark.calls) == 1
+    assert lark.calls[0][lark.calls[0].index("--command") + 1] == "str_replace"
+
+
+def test_str_replace_permission_failure_raises_without_append():
     lark = QueueLark([{"ok": False, "_error": "permission denied"}])
 
     with pytest.raises(SystemExit, match="更新飞书文档章节失败"):
-        replace_or_append_section(lark, "doc_1", "标题", "## 标题\n\n内容")
+        replace_or_append_section(lark, "doc_1", "标题", SECTION_MD)
 
     assert len(lark.calls) == 1
-    assert "replace_range" in lark.calls[0]
+    assert lark.calls[0][lark.calls[0].index("--command") + 1] == "str_replace"
 
 
-def test_replace_range_explicit_false_ok_with_revision_raises_without_append():
+def test_str_replace_explicit_false_ok_with_revision_raises_without_append():
     lark = QueueLark([{"ok": False, "data": {"revision_id": "rev"}, "_error": "command exited 1"}])
 
     with pytest.raises(SystemExit, match="更新飞书文档章节失败"):
-        replace_or_append_section(lark, "doc_1", "标题", "## 标题\n\n内容")
+        replace_or_append_section(lark, "doc_1", "标题", SECTION_MD)
 
     assert len(lark.calls) == 1
-    assert "replace_range" in lark.calls[0]
 
 
 def test_append_fallback_failure_raises():
@@ -158,53 +170,31 @@ def test_append_fallback_failure_raises():
     )
 
     with pytest.raises(SystemExit, match="追加飞书文档章节失败"):
-        replace_or_append_section(lark, "doc_1", "标题", "## 标题\n\n内容")
+        replace_or_append_section(lark, "doc_1", "标题", SECTION_MD)
 
     assert len(lark.calls) == 2
-    assert "append" in lark.calls[1]
+    assert lark.calls[1][lark.calls[1].index("--command") + 1] == "append"
 
 
-def test_change_record_permission_failure_raises_without_append():
-    lark = QueueLark([{"ok": False, "error": {"message": "permission denied"}}])
-
-    with pytest.raises(SystemExit, match="更新飞书改动记录失败"):
-        append_change_record(lark, "doc_1", "Riemann", "生成/更新 标题")
-
-    assert len(lark.calls) == 1
-    assert "insert_after" in lark.calls[0]
-
-
-def test_change_record_missing_heading_falls_back_to_append_and_succeeds():
-    lark = QueueLark(
-        [
-            {"ok": False, "message": "title not found"},
-            {"ok": True, "data": {"revision_id": "rev_change_record"}},
-        ]
-    )
+def test_change_record_appends_entry_with_command_append():
+    lark = QueueLark([{"ok": True, "data": {"revision_id": "rev_change_record"}}])
 
     append_change_record(lark, "doc_1", "Riemann", "生成/更新 标题")
 
-    assert len(lark.calls) == 2
-    assert "insert_after" in lark.calls[0]
-    assert "append" in lark.calls[1]
-    append_markdown = lark.calls[1][lark.calls[1].index("--markdown") + 1]
-    assert "## 改动记录" in append_markdown
-    assert "Riemann" in append_markdown
+    assert len(lark.calls) == 1
+    assert lark.calls[0][lark.calls[0].index("--command") + 1] == "append"
+    content = lark.calls[0][lark.calls[0].index("--content") + 1]
+    assert "Riemann" in content
+    assert "生成/更新 标题" in content
 
 
-def test_change_record_append_fallback_failure_raises():
-    lark = QueueLark(
-        [
-            {"ok": False, "message": "title not found"},
-            {"ok": False, "_error": "append failed"},
-        ]
-    )
+def test_change_record_failure_raises():
+    lark = QueueLark([{"ok": False, "_error": "permission denied"}])
 
     with pytest.raises(SystemExit, match="追加飞书改动记录失败"):
         append_change_record(lark, "doc_1", "Riemann", "生成/更新 标题")
 
-    assert len(lark.calls) == 2
-    assert "append" in lark.calls[1]
+    assert len(lark.calls) == 1
 
 
 def test_existing_folder_and_doc_are_reused_without_create_calls():
@@ -239,7 +229,7 @@ def test_existing_folder_accepts_lark_cli_code_zero_success_shape():
     assert all(call[:2] != ["drive", "+create-folder"] for call in lark.calls)
 
 
-def test_write_report_creates_folder_doc_and_replaces_section():
+def test_write_report_per_day_creates_folder_doc_and_overwrites():
     lark = FakeLark()
     window = build_date_window(date(2026, 5, 14), ReportKind.DAILY)
 
@@ -255,11 +245,14 @@ def test_write_report_creates_folder_doc_and_replaces_section():
     assert result.url == "https://feishu.cn/docx/doc_daily"
     assert any(call[:2] == ["drive", "+create-folder"] for call in lark.calls)
     assert any(call[:2] == ["docs", "+create"] for call in lark.calls)
-    assert any(call[:2] == ["docs", "+update"] for call in lark.calls)
-    assert any("--mode" in call and "overwrite" in call for call in lark.calls)
+    overwrite = next(
+        call for call in lark.calls if call[:2] == ["docs", "+update"] and "overwrite" in call
+    )
+    assert overwrite[overwrite.index("--command") + 1] == "overwrite"
+    assert "--content" in overwrite
 
 
-def test_write_report_strips_fallback_h1_inside_daily_section():
+def test_write_report_per_day_strips_fallback_h1_inside_daily_section():
     lark = FakeLark()
     window = build_date_window(date(2026, 5, 14), ReportKind.DAILY)
 
@@ -271,8 +264,46 @@ def test_write_report_strips_fallback_h1_inside_daily_section():
         editor="Riemann",
     )
 
-    update_call = next(call for call in lark.calls if call[:2] == ["docs", "+update"])
-    markdown = update_call[update_call.index("--markdown") + 1]
-    assert markdown.startswith("## 2026年05月14日（周四）\n\n## 今日工作总结")
+    overwrite = next(
+        call for call in lark.calls if call[:2] == ["docs", "+update"] and "overwrite" in call
+    )
+    markdown = overwrite[overwrite.index("--content") + 1]
+    assert markdown.startswith("# 2026年第20周日报 05/14\n\n## 2026年05月14日（周四）\n\n## 今日工作总结")
     assert "# 2026年05月14日（周四）" not in markdown.splitlines()
     assert "## 改动记录" in markdown
+
+
+def test_weekly_doc_title_spans_iso_week():
+    assert weekly_doc_title(date(2026, 5, 14)) == "第20周 05/11-05/17"
+
+
+def test_write_report_weekly_sections_writes_day_section_into_weekly_doc():
+    # str_replace misses (first write of the day) -> falls back to append.
+    lark = QueueLark(
+        [
+            {"ok": True, "data": {"files": [{"name": "周报记录", "type": "folder", "token": "fld_week"}]}},
+            {"ok": True, "data": {"files": [{"name": "第20周 05/11-05/17", "type": "docx", "token": "doc_week"}]}},
+            {"ok": True, "data": {"result": "failed"}},
+            {"ok": True, "data": {"revision_id": "rev_append"}},
+        ]
+    )
+    window = build_date_window(date(2026, 5, 14), ReportKind.DAILY)
+
+    result = write_report(
+        lark=lark,
+        window=window,
+        markdown="## 今日工作总结\n- 完成登录方案梳理",
+        config={"weekly_folder_name": "周报记录", "report_layout": "weekly_sections"},
+        editor="Riemann",
+    )
+
+    assert result.doc_token == "doc_week"
+    str_replace = next(call for call in lark.calls if "str_replace" in call)
+    assert str_replace[str_replace.index("--pattern") + 1] == "## 2026年05月14日（周四）...---"
+    append = next(call for call in lark.calls if "append" in call)
+    section = append[append.index("--content") + 1]
+    # Day heading is the only H2; the summary's H2 was demoted to H3.
+    assert section.startswith("## 2026年05月14日（周四）\n\n### 今日工作总结")
+    assert section.rstrip().endswith("---")
+    # No per-day doc was created in the daily folder.
+    assert all(call[:2] != ["docs", "+create"] for call in lark.calls)
