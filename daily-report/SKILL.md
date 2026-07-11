@@ -1,6 +1,6 @@
 ---
 name: daily-report
-description: Generate, preview, troubleshoot, or set up Feishu/Lark daily work reports and weekly report documents from local activity sources. Use when the user asks for 日报, daily report, work report, 周报记录, Feishu report automation, collecting Codex or Claude sessions, summarizing daily work, writing a report into a Lark document, or helping coworkers install the daily report workflow.
+description: Generate, preview, troubleshoot, or set up Feishu/Lark daily work reports and weekly report documents from local activity sources. Use when the user asks for 日报, daily report, work report, 周报记录, Feishu report automation, collecting Codex or Claude sessions, summarizing daily work, writing a report into a Lark document, a 晨间简报 / morning briefing (yesterday recap + today's TODOs + calendar reminders), or helping coworkers install the daily report workflow.
 ---
 
 # Daily Report
@@ -120,6 +120,45 @@ The workflow collects and normalizes local and Feishu data for the target date o
 - Browser Use and Computer Use tool traces found inside Codex rollout files.
 
 Chrome history is copied to a temporary SQLite file before reading so it can work while Chrome is open. Required Feishu authorization is listed under Feishu Requirements. Daily reports emphasize execution progress. Weekly reports emphasize project outcomes, review of issues, risks, and next-week plans.
+
+## Morning Briefing (晨间简报)
+
+Besides the daily/weekly reports, this skill can produce a **morning briefing** — a
+short daily digest the user reads first thing (typically pushed at 10:00). It answers
+"what happened yesterday, what's on my plate today, and what am I committed to at a
+set time".
+
+Run it:
+
+```bash
+python3 ~/.codex/skills/daily-report/scripts/morning_briefing.py
+# optional: --date 2026-07-10
+```
+
+It assembles four blocks and prints clean Markdown to stdout (so a cron/chat bot can
+deliver it verbatim):
+
+1. **今日时间提醒** — today's Feishu calendar events (`lark-cli calendar +agenda`), with
+   location / VC link, and a ⚠️ flag when an invite is still `needs_action`.
+2. **今日 TODO** — open items from the user's Feishu todo note (the latest dated
+   sections; struck-through `<del>` items are treated as done).
+3. **待跟进** — pending "别人找我说的事" and rolling 待办 from the local work digest.
+4. **昨日日报** — pointer to yesterday's daily report.
+
+Configure under a `morning_briefing` key in the config file:
+
+```json
+"morning_briefing": {
+  "todo_doc_token": "CHgcd78UFohk66xACkUcUkNPnb9",
+  "digest_dir": "~/Riemann/工作整理"
+}
+```
+
+The local work digest at `digest_dir` (`工作整理总览.md`, `日常事项/YYYY-MM.md`, `周报/`)
+is the long-term record of the user's Feishu work; keep it updated when generating
+reports. Scheduling is external (e.g. a cc-connect cron at `0 10 * * *`); note that a
+local cron only fires while the machine is awake and the daemon is running — move it to
+a server-side automation if punctual delivery is required.
 
 ## Troubleshooting
 

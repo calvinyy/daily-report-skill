@@ -165,9 +165,14 @@ def summarize(
 
 
 def _has_required_report_shape(markdown: str, window: DateWindow) -> bool:
+    # Accept the AI summary as long as it contains all the required second-level
+    # sections (subset match), rather than demanding an exact, identically-ordered
+    # heading list. The strict equality check rejected otherwise-good AI output
+    # (e.g. an extra title/appendix heading) and forced every report down to the
+    # flat template fallback, which reads as "all bold, no hierarchy".
     expected = WEEKLY_SECTIONS if window.kind == ReportKind.WEEKLY else DAILY_SECTIONS
-    headings = [line.removeprefix("## ").strip() for line in markdown.splitlines() if line.startswith("## ")]
-    return headings == expected
+    headings = {line.removeprefix("## ").strip() for line in markdown.splitlines() if line.startswith("## ")}
+    return all(section in headings for section in expected)
 
 
 def _is_risk(record: SourceRecord) -> bool:
