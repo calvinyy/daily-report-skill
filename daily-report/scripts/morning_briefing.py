@@ -24,10 +24,14 @@ import argparse
 import json
 import re
 import subprocess
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from html import unescape
 from pathlib import Path
 from typing import Any
+
+# The user lives on Beijing time (UTC+8); the host clock may be elsewhere, so
+# always derive "today" and the weekday from Beijing wall-clock time.
+BEIJING = timezone(timedelta(hours=8))
 
 DEFAULT_TODO_DOC_TOKEN = "CHgcd78UFohk66xACkUcUkNPnb9"
 DEFAULT_DIGEST_DIR = "~/Riemann/工作整理"
@@ -100,6 +104,13 @@ def _strip_tags(html: str) -> str:
     return unescape(" ".join(text.split()))
 
 
+def _prev_workday(d: date) -> date:
+    d -= timedelta(days=1)
+    while d.weekday() >= 5:  # skip Sat(5)/Sun(6)
+        d -= timedelta(days=1)
+    return d
+
+
 # --- Calendar ----------------------------------------------------------------
 
 def fetch_today_events() -> list[dict[str, str]]:
@@ -158,7 +169,7 @@ def build_briefing(today: date, cfg: dict[str, Any]) -> str:
     mb = cfg.get("morning_briefing", {}) if isinstance(cfg.get("morning_briefing"), dict) else {}
     doc_token = mb.get("todo_doc_token") or DEFAULT_TODO_DOC_TOKEN
     digest_dir = Path(mb.get("digest_dir") or DEFAULT_DIGEST_DIR).expanduser()
-    yesterday = today - timedelta(days=1)
+    yesterday = _prev_workday(today)  # skip back over the weekend (Mon → Fri)
 
     out: list[str] = [f"# ☀️ 晨间简报 · {today:%Y-%m-%d}（周{'一二三四五六日'[today.weekday()]}）", ""]
 
@@ -209,9 +220,17 @@ def build_briefing(today: date, cfg: dict[str, Any]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate the morning briefing.")
-    parser.add_argument("--date", help="ISO date (default: today)")
+    parser.add_argument("--date", help="ISO date (default: today, Beijing time)")
+    parser.add_argument(
+        "--include-weekend",
+        action="store_true",
+        help="Also generate on Sat/Sun (by default the briefing is weekday-only).",
+    )
     args = parser.parse_args()
-    today = date.fromisoformat(args.date) if args.date else datetime.now().date()
+    today = date.fromisoformat(args.date) if args.date else datetime.now(BEIJING).date()
+    if today.weekday() >= 5 and not args.include_weekend:
+        # Weekday-only briefing: emit nothing so a cron/bot has nothing to deliver.
+        return 0
     print(build_briefing(today, _load_config()))
     return 0
 
