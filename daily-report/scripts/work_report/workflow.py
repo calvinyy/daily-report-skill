@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -172,8 +173,38 @@ def _write_raw_bundle(path_value: Any, bundle: ActivityBundle) -> None:
     log(f"已写入原始采集数据: {path}")
 
 
-def _notification_excerpt(summary: str, limit: int = 500) -> str:
-    text = " ".join(line.strip() for line in summary.splitlines() if line.strip())
+def _notification_excerpt(summary: str, limit: int = 1400) -> str:
+    """Feishu IM messages do not render Markdown headings (``##``) or horizontal
+    rules (``---``); dumping the raw report as one space-joined line shows those
+    markers literally and reads as "no formatting". Convert to IM-friendly rich
+    text instead: headings become bold lines, dividers are dropped, bullets are
+    normalised to ``•``, and line breaks are preserved so the chat message keeps
+    a clear visual structure (bold section titles + bulleted lines)."""
+    lines: list[str] = []
+    for raw in summary.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+        if re.fullmatch(r"(?:[-*_—]\s*){3,}", stripped):  # horizontal rule
+            continue
+        heading = re.match(r"^#{1,6}\s+(.*)$", stripped)
+        if heading:
+            if lines and lines[-1] != "":
+                lines.append("")
+            lines.append(f"**{heading.group(1).strip()}**")
+            continue
+        bullet = re.match(r"^[-*]\s+(.*)$", stripped)
+        if bullet:
+            lines.append(f"• {bullet.group(1).strip()}")
+            continue
+        lines.append(stripped)
+    text = "\n".join(lines).strip()
     if len(text) <= limit:
         return text
-    return text[: limit - 1].rstrip() + "..."
+    truncated = text[:limit]
+    cut = truncated.rfind("\n")
+    if cut > limit * 0.6:
+        truncated = truncated[:cut]
+    return truncated.rstrip() + "\n\n……（完整内容见上方文档）"
