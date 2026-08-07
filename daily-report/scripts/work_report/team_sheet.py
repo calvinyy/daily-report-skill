@@ -22,7 +22,7 @@ from __future__ import annotations
 import csv
 import io
 import re
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Callable
 
 DONE_PRIMARY = "今日工作总结"
@@ -196,20 +196,23 @@ def fill_team_sheet(
         return True
 
     limit = int(cfg.get("max_points") or 5)
+    # A daily report describes the previous day's completed work, so its content
+    # is logged one day earlier (offset -1). Configurable via date_offset_days.
+    col_date = target_date + timedelta(days=int(cfg.get("date_offset_days", -1)))
     done, plan = extract_points(summary_md, limit)
     target = resolve_target(
         lark, token, sheet_id, name, str(cfg.get("name_col") or "A"),
-        int(cfg.get("date_header_row") or 2), target_date,
+        int(cfg.get("date_header_row") or 2), col_date,
     )
     if not target:
-        log(f"团队表格未找到 {name} 或日期 {target_date} 对应列，跳过")
+        log(f"团队表格未找到 {name} 或日期 {col_date} 对应列，跳过")
         return False
     row, done_col, plan_col = target
     overwrite = bool(cfg.get("overwrite"))
     ok1 = _write_cell(lark, token, sheet_id, f"{done_col}{row}", format_cell(done), overwrite)
     ok2 = _write_cell(lark, token, sheet_id, f"{plan_col}{row}", format_cell(plan), overwrite)
     if ok1 and ok2:
-        log(f"团队表格已填写 {name} {target_date}（{done_col}{row}/{plan_col}{row}）")
+        log(f"团队表格已填写 {name} {col_date}（{done_col}{row}/{plan_col}{row}）")
         return True
     log("团队表格写入失败")
     return False

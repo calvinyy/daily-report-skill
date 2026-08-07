@@ -98,11 +98,20 @@ def test_resolve_target_date_not_double_matched():
 
 def test_fill_team_sheet_writes_two_cells():
     lark = FakeLark(HEADER, NAMES)
-    config = {"team_sheet": {"enabled": True, "spreadsheet_token": "tok", "sheet_id": "sid", "name": "Calvin"}}
+    config = {"team_sheet": {"enabled": True, "spreadsheet_token": "tok", "sheet_id": "sid", "name": "Calvin", "date_offset_days": 0}}
     ok = fill_team_sheet(lark, config, date(2026, 8, 7), SAMPLE_MD)
     assert ok is True
     ranges = [w[0] for w in lark.writes]
     assert ranges == ["J4", "K4"]
+
+
+def test_fill_team_sheet_applies_previous_day_offset():
+    # default offset -1: a report for 8/7 lands in the 8/6 column (H/I), not J/K.
+    lark = FakeLark(HEADER, NAMES)
+    config = {"team_sheet": {"enabled": True, "spreadsheet_token": "tok", "sheet_id": "sid", "name": "Calvin"}}
+    fill_team_sheet(lark, config, date(2026, 8, 7), SAMPLE_MD)
+    ranges = [w[0] for w in lark.writes]
+    assert ranges == ["H4", "I4"]
 
 
 def test_fill_team_sheet_disabled_is_noop():
@@ -114,7 +123,7 @@ def test_fill_team_sheet_disabled_is_noop():
 def test_fill_team_sheet_does_not_clobber_manual_entries():
     # J4 already has a manual "1. ..." entry; K4 empty → only K4 gets written.
     lark = FakeLark(HEADER, NAMES, cells={"J4": "1. 手动写的内容"})
-    config = {"team_sheet": {"enabled": True, "spreadsheet_token": "tok", "sheet_id": "sid", "name": "Calvin"}}
+    config = {"team_sheet": {"enabled": True, "spreadsheet_token": "tok", "sheet_id": "sid", "name": "Calvin", "date_offset_days": 0}}
     fill_team_sheet(lark, config, date(2026, 8, 7), SAMPLE_MD)
     ranges = [w[0] for w in lark.writes]
     assert "J4" not in ranges  # manual entry preserved
@@ -124,7 +133,7 @@ def test_fill_team_sheet_does_not_clobber_manual_entries():
 def test_fill_team_sheet_updates_own_bullet_entry():
     # A cell we previously wrote ("• ...") may be refreshed.
     lark = FakeLark(HEADER, NAMES, cells={"J4": "• 旧内容", "K4": "• 旧计划"})
-    config = {"team_sheet": {"enabled": True, "spreadsheet_token": "tok", "sheet_id": "sid", "name": "Calvin"}}
+    config = {"team_sheet": {"enabled": True, "spreadsheet_token": "tok", "sheet_id": "sid", "name": "Calvin", "date_offset_days": 0}}
     fill_team_sheet(lark, config, date(2026, 8, 7), SAMPLE_MD)
     ranges = [w[0] for w in lark.writes]
     assert "J4" in ranges and "K4" in ranges
