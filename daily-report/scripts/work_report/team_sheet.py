@@ -156,7 +156,22 @@ def resolve_target(
     return row, col_letter(done_col), col_letter(done_col + 1)
 
 
-def _write_cell(lark: Any, token: str, sheet_id: str, a1: str, text: str) -> bool:
+def _read_cell(lark: Any, token: str, sheet_id: str, a1: str) -> str:
+    rows = _read_csv(lark, token, sheet_id, f"{a1}:{a1}")
+    return (rows[0][0].strip() if rows and rows[0] else "")
+
+
+def _may_overwrite(existing: str) -> bool:
+    """Only write when the cell is empty or holds a value we wrote ourselves
+    (bullet-prefixed). Never clobber the user's own manual entries."""
+    return existing == "" or existing.lstrip().startswith("•")
+
+
+def _write_cell(lark: Any, token: str, sheet_id: str, a1: str, text: str, overwrite: bool = False) -> bool:
+    if not overwrite:
+        existing = _read_cell(lark, token, sheet_id, a1)
+        if not _may_overwrite(existing):
+            return True  # leave the user's manual entry untouched
     import json as _json
     result = lark.call(
         ["sheets", "+cells-set", "--spreadsheet-token", token, "--sheet-id", sheet_id,
@@ -190,8 +205,9 @@ def fill_team_sheet(
         log(f"团队表格未找到 {name} 或日期 {target_date} 对应列，跳过")
         return False
     row, done_col, plan_col = target
-    ok1 = _write_cell(lark, token, sheet_id, f"{done_col}{row}", format_cell(done))
-    ok2 = _write_cell(lark, token, sheet_id, f"{plan_col}{row}", format_cell(plan))
+    overwrite = bool(cfg.get("overwrite"))
+    ok1 = _write_cell(lark, token, sheet_id, f"{done_col}{row}", format_cell(done), overwrite)
+    ok2 = _write_cell(lark, token, sheet_id, f"{plan_col}{row}", format_cell(plan), overwrite)
     if ok1 and ok2:
         log(f"团队表格已填写 {name} {target_date}（{done_col}{row}/{plan_col}{row}）")
         return True

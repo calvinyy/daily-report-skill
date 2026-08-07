@@ -59,15 +59,21 @@ def test_format_cell():
 
 
 class FakeLark:
-    def __init__(self, header_csv, name_csv):
+    def __init__(self, header_csv, name_csv, cells=None):
         self.header_csv = header_csv
         self.name_csv = name_csv
+        self.cells = cells or {}  # existing cell content by A1, for read-before-write
         self.writes = []
 
     def call(self, args, timeout=30):
         if "+csv-get" in args:
             rng = args[args.index("--range") + 1]
-            return {"data": {"annotated_csv": self.header_csv if rng.startswith("A2:") else self.name_csv}}
+            if rng.startswith("A2:"):
+                return {"data": {"annotated_csv": self.header_csv}}
+            if rng.startswith("A1:A"):
+                return {"data": {"annotated_csv": self.name_csv}}
+            a1 = rng.split(":")[0]  # single-cell read like "J4:J4"
+            return {"data": {"annotated_csv": self.cells.get(a1, "")}}
         if "+cells-set" in args:
             self.writes.append((args[args.index("--range") + 1], args[args.index("--cells") + 1]))
             return {"ok": True}
@@ -103,3 +109,22 @@ def test_fill_team_sheet_disabled_is_noop():
     lark = FakeLark(HEADER, NAMES)
     assert fill_team_sheet(lark, {"team_sheet": {"enabled": False}}, date(2026, 8, 7), SAMPLE_MD) is True
     assert lark.writes == []
+
+
+def test_fill_team_sheet_does_not_clobber_manual_entries():
+    # J4 already has a manual "1. ..." entry; K4 empty → only K4 gets written.
+    lark = FakeLark(HEADER, NAMES, cells={"J4": "1. 手动写的内容"})
+    config = {"team_sheet": {"enabled": True, "spreadsheet_token": "tok", "sheet_id": "sid", "name": "Calvin"}}
+    fill_team_sheet(lark, config, date(2026, 8, 7), SAMPLE_MD)
+    ranges = [w[0] for w in lark.writes]
+    assert "J4" not in ranges  # manual entry preserved
+    assert "K4" in ranges
+
+
+def test_fill_team_sheet_updates_own_bullet_entry():
+    # A cell we previously wrote ("• ...") may be refreshed.
+    lark = FakeLark(HEADER, NAMES, cells={"J4": "• 旧内容", "K4": "• 旧计划"})
+    config = {"team_sheet": {"enabled": True, "spreadsheet_token": "tok", "sheet_id": "sid", "name": "Calvin"}}
+    fill_team_sheet(lark, config, date(2026, 8, 7), SAMPLE_MD)
+    ranges = [w[0] for w in lark.writes]
+    assert "J4" in ranges and "K4" in ranges
