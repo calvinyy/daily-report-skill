@@ -144,6 +144,16 @@ def run_workflow(
             # Doc is written but the user wasn't told — fail so the guard retries
             # (re-run is idempotent: it overwrites the same day's doc).
             return 1
+
+    # After a daily report, fill the shared team tracking sheet. Never let this
+    # fail the run — the report is already written and delivered.
+    if window.kind == ReportKind.DAILY:
+        try:
+            from work_report.team_sheet import fill_team_sheet
+
+            fill_team_sheet(lark, config, window.target_date, summary, log=log)
+        except Exception as exc:  # pragma: no cover - defensive
+            log(f"团队表格填写异常(不影响日报): {exc}")
     return 0
 
 

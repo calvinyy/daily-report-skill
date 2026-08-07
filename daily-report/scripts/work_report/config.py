@@ -62,6 +62,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "skip_domains": sorted(DEFAULT_SKIP_DOMAINS),
     "max_prompt_records": 180,
     "include_raw_bundle_path": "",
+    # After a DAILY report, fill the shared team tracking sheet (one row per
+    # person; two columns per date: 今日完成 / 明日计划). See team_sheet.py.
+    "team_sheet": {
+        "enabled": True,
+        "spreadsheet_token": "Kx3Ds5mJ4hVlPQtqAGAcCwI0nSf",
+        "sheet_id": "09e850",
+        "name": "Calvin",
+        "name_col": "A",
+        "date_header_row": 2,
+        "max_points": 5,
+    },
 }
 
 
