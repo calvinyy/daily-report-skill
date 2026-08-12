@@ -72,8 +72,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "name_col": "A",
         "date_header_row": 2,
         "max_points": 5,
-        # A daily report describes the previous day; log it one column earlier.
-        "date_offset_days": -1,
+        # Log a report for day D into day D's column (matches how people fill
+        # their own rows, and avoids a Monday report landing on the weekend).
+        "date_offset_days": 0,
     },
 }
 

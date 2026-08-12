@@ -196,9 +196,9 @@ def fill_team_sheet(
         return True
 
     limit = int(cfg.get("max_points") or 5)
-    # A daily report describes the previous day's completed work, so its content
-    # is logged one day earlier (offset -1). Configurable via date_offset_days.
-    col_date = target_date + timedelta(days=int(cfg.get("date_offset_days", -1)))
+    # Log a report for day D into day D's column by default (offset 0);
+    # configurable via date_offset_days.
+    col_date = target_date + timedelta(days=int(cfg.get("date_offset_days", 0)))
     done, plan = extract_points(summary_md, limit)
     target = resolve_target(
         lark, token, sheet_id, name, str(cfg.get("name_col") or "A"),

@@ -105,13 +105,20 @@ def test_fill_team_sheet_writes_two_cells():
     assert ranges == ["J4", "K4"]
 
 
-def test_fill_team_sheet_applies_previous_day_offset():
-    # default offset -1: a report for 8/7 lands in the 8/6 column (H/I), not J/K.
+def test_fill_team_sheet_default_offset_is_same_day():
+    # default offset 0: a report for 8/7 lands in the 8/7 column (J/K).
     lark = FakeLark(HEADER, NAMES)
     config = {"team_sheet": {"enabled": True, "spreadsheet_token": "tok", "sheet_id": "sid", "name": "Calvin"}}
     fill_team_sheet(lark, config, date(2026, 8, 7), SAMPLE_MD)
-    ranges = [w[0] for w in lark.writes]
-    assert ranges == ["H4", "I4"]
+    assert [w[0] for w in lark.writes] == ["J4", "K4"]
+
+
+def test_fill_team_sheet_date_offset_can_shift():
+    # explicit offset -1: a report for 8/7 lands in the 8/6 column (H/I).
+    lark = FakeLark(HEADER, NAMES)
+    config = {"team_sheet": {"enabled": True, "spreadsheet_token": "tok", "sheet_id": "sid", "name": "Calvin", "date_offset_days": -1}}
+    fill_team_sheet(lark, config, date(2026, 8, 7), SAMPLE_MD)
+    assert [w[0] for w in lark.writes] == ["H4", "I4"]
 
 
 def test_fill_team_sheet_disabled_is_noop():
