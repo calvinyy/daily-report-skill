@@ -142,24 +142,31 @@ def _fmt_time(t: dict[str, Any]) -> str:
 
 # --- Local work digest -------------------------------------------------------
 
-def fetch_pending_from_digest(digest_dir: Path, today: date) -> list[str]:
-    month_file = digest_dir / "日常事项" / f"{today:%Y-%m}.md"
+_DATE_H2 = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})")
+
+
+def fetch_pending_from_digest(digest_dir: Path, today: date, days: int = 7) -> list[str]:
+    """Open follow-ups (🔴/🟡) from 日常事项 whose day-section falls within the
+    last `days` days. Older items are intentionally dropped so the briefing does
+    not keep resurfacing weeks-old follow-ups."""
+    cutoff = today - timedelta(days=days)
     pending: list[str] = []
-    if month_file.exists():
+    # the window can span the previous month's file, so read both months it touches
+    for ym in sorted({f"{today:%Y-%m}", f"{cutoff:%Y-%m}"}):
+        month_file = digest_dir / "日常事项" / f"{ym}.md"
+        if not month_file.exists():
+            continue
+        in_window = False
         for line in month_file.read_text(encoding="utf-8").splitlines():
-            if ("🔴" in line or "🟡" in line) and line.strip().startswith("#"):
-                pending.append(line.lstrip("# ").strip())
-    overview = digest_dir / "工作整理总览.md"
-    if overview.exists():
-        capture = False
-        for line in overview.read_text(encoding="utf-8").splitlines():
-            if line.startswith("## ") and "待办" in line:
-                capture = True
+            m = _DATE_H2.match(line.strip())
+            if m:
+                try:
+                    in_window = date.fromisoformat(m.group(1)) >= cutoff
+                except ValueError:
+                    in_window = False
                 continue
-            if capture and line.startswith("## "):
-                break
-            if capture and line.strip().startswith("- "):
-                pending.append(line.strip()[2:].strip())
+            if in_window and line.strip().startswith("#") and ("🔴" in line or "🟡" in line):
+                pending.append(line.lstrip("# ").strip())
     return pending
 
 
