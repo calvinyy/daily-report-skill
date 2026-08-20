@@ -71,7 +71,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "name": "Calvin",
         "name_col": "A",
         "date_header_row": 2,
-        "max_points": 5,
+        "max_points": 3,
         # Log a report for day D into day D's column (matches how people fill
         # their own rows, and avoids a Monday report landing on the weekend).
         "date_offset_days": 0,

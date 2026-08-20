@@ -195,7 +195,7 @@ def fill_team_sheet(
         log("团队表格配置不完整，跳过")
         return True
 
-    limit = int(cfg.get("max_points") or 5)
+    limit = int(cfg.get("max_points") or 3)
     # Log a report for day D into day D's column by default (offset 0);
     # configurable via date_offset_days.
     col_date = target_date + timedelta(days=int(cfg.get("date_offset_days", 0)))
